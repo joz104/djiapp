@@ -1,0 +1,136 @@
+import { DJIControl } from './dji-control.js';
+import { VideoPane } from './video-pane.js';
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch((e) => log('err', `SW register failed: ${e.message}`));
+}
+
+const logEl = document.getElementById('log');
+function log(kind, msg) {
+  const line = document.createElement('div');
+  line.className = kind;
+  const ts = new Date().toLocaleTimeString();
+  line.textContent = `[${ts}] ${msg}`;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+const dji = new DJIControl();
+if (!dji.isSupported()) {
+  log('err', 'Web Bluetooth unavailable. Use Chrome on Android over HTTPS or http://localhost.');
+}
+
+const pane1 = new VideoPane(document.getElementById('video1'), 1);
+const pane2 = new VideoPane(document.getElementById('video2'), 2);
+pane1.onLog = log;
+pane2.onLog = log;
+
+document.getElementById('url1').value = pane1.restoreLastUrl();
+document.getElementById('url2').value = pane2.restoreLastUrl();
+
+document.querySelectorAll('[data-load]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const id = btn.getAttribute('data-load');
+    const url = document.getElementById(`url${id}`).value;
+    const pane = id === '1' ? pane1 : pane2;
+    pane.load(url);
+    log('ok', `Loading pane ${id}: ${url || '(empty)'}`);
+  });
+});
+
+document.getElementById('btn-scan').addEventListener('click', async () => {
+  try {
+    const entry = await dji.scanAndPair();
+    log('ok', `Paired ${entry.device.name || entry.device.id}`);
+  } catch (e) {
+    log('err', `Pair failed: ${e.message}`);
+  }
+});
+
+const masterBtn = document.getElementById('btn-master');
+const masterLabel = document.getElementById('master-label');
+let masterRecording = false;
+
+masterBtn.addEventListener('click', async () => {
+  if (dji.pairedCameras.size === 0) {
+    log('warn', 'No cameras paired. Tap "+ Pair Camera" first.');
+    return;
+  }
+  masterRecording = !masterRecording;
+  masterBtn.setAttribute('aria-pressed', String(masterRecording));
+  masterLabel.textContent = masterRecording ? 'RECORDING — TAP TO STOP' : 'MASTER RECORD';
+  try {
+    const results = masterRecording ? await dji.startRecordAll() : await dji.stopRecordAll();
+    const okCount = results.filter((r) => r.ok).length;
+    log(okCount === results.length ? 'ok' : 'err',
+      `${masterRecording ? 'START' : 'STOP'} fan-out: ${okCount}/${results.length} succeeded`);
+    for (const r of results) {
+      if (!r.ok) log('err', `  ${r.entry.device.name || r.entry.device.id}: ${r.err?.message || r.err}`);
+    }
+  } catch (e) {
+    log('err', `Record fan-out error: ${e.message}`);
+  }
+});
+
+const pairedListEl = document.getElementById('paired-list');
+function renderPairedList() {
+  pairedListEl.innerHTML = '';
+  for (const entry of dji.pairedCameras.values()) {
+    const li = document.createElement('li');
+    const left = document.createElement('div');
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = entry.device.name || entry.device.id;
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const batt = entry.battery == null ? '—' : `${entry.battery}%`;
+    meta.textContent = `Connected • Battery ${batt} • ${entry.recording ? '● REC' : 'idle'}`;
+    left.appendChild(name);
+    left.appendChild(meta);
+    const btn = document.createElement('button');
+    btn.textContent = 'Disconnect';
+    btn.addEventListener('click', () => dji.disconnect(entry.device.id));
+    li.appendChild(left);
+    li.appendChild(btn);
+    pairedListEl.appendChild(li);
+  }
+}
+
+function updateCamChips() {
+  const cams = Array.from(dji.pairedCameras.values());
+  const slots = [
+    { ble: 'cam1-ble', bat: 'cam1-bat', rec: 'cam1-rec' },
+    { ble: 'cam2-ble', bat: 'cam2-bat', rec: 'cam2-rec' },
+  ];
+  slots.forEach((slot, i) => {
+    const ble = document.getElementById(slot.ble);
+    const bat = document.getElementById(slot.bat);
+    const rec = document.getElementById(slot.rec);
+    const cam = cams[i];
+    if (!cam) {
+      ble.textContent = 'BLE: —'; ble.className = 'chip';
+      bat.textContent = 'Batt: —'; bat.className = 'chip';
+      rec.textContent = '● IDLE'; rec.className = 'chip';
+      return;
+    }
+    const connected = cam.server?.connected;
+    ble.textContent = connected ? 'BLE: ✓' : 'BLE: ✗';
+    ble.className = 'chip ' + (connected ? 'ok' : 'warn');
+    bat.textContent = cam.battery == null ? 'Batt: —' : `Batt: ${cam.battery}%`;
+    bat.className = 'chip ' + (cam.battery == null ? '' : cam.battery < 20 ? 'warn' : 'ok');
+    rec.textContent = cam.recording ? '● REC' : '● IDLE';
+    rec.className = 'chip ' + (cam.recording ? 'rec' : '');
+  });
+}
+
+dji.addEventListener('statusChange', () => {
+  renderPairedList();
+  updateCamChips();
+});
+dji.addEventListener('writeError', (ev) => {
+  log('err', `GATT write rejected on ${ev.detail.device.name || ev.detail.device.id}: ${ev.detail.error?.message || ev.detail.error}. If this is the first run, the placeholder 0x00 opcode is expected to fail — sniff the real bytes (see dji-control.js header).`);
+});
+
+renderPairedList();
+updateCamChips();
+log('ok', 'Field Multi-Cam ready. Pair cameras and load streams to begin.');

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0b0f" />
+  <title>Field Multi-Cam Controller</title>
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+  <link rel="stylesheet" href="./styles.css" />
+  <script defer src="./vendor/hls.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Field Multi-Cam</h1>
+    <div class="top-actions">
+      <button id="btn-scan" class="btn btn-secondary">+ Pair Camera</button>
+      <button id="btn-master" class="btn btn-record" aria-pressed="false">
+        <span class="dot"></span><span id="master-label">MASTER RECORD</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="grid">
+    <!-- Camera 1 -->
+    <section class="cam" data-cam="1">
+      <div class="cam-header">
+        <h2>Camera 1 <span class="tag">Action 3</span></h2>
+        <div class="status">
+          <span class="chip" id="cam1-ble">BLE: —</span>
+          <span class="chip" id="cam1-bat">Batt: —</span>
+          <span class="chip" id="cam1-rec">● IDLE</span>
+        </div>
+      </div>
+      <video id="video1" class="video" controls muted playsinline></video>
+      <div class="row">
+        <input type="text" id="url1" placeholder="rtmp://192.168.x.x/live/cam1 or https://…/stream.m3u8" />
+        <button class="btn" data-load="1">Load</button>
+      </div>
+    </section>
+
+    <!-- Camera 2 -->
+    <section class="cam" data-cam="2">
+      <div class="cam-header">
+        <h2>Camera 2 <span class="tag">Action 4</span></h2>
+        <div class="status">
+          <span class="chip" id="cam2-ble">BLE: —</span>
+          <span class="chip" id="cam2-bat">Batt: —</span>
+          <span class="chip" id="cam2-rec">● IDLE</span>
+        </div>
+      </div>
+      <video id="video2" class="video" controls muted playsinline></video>
+      <div class="row">
+        <input type="text" id="url2" placeholder="rtmp://192.168.x.x/live/cam2 or https://…/stream.m3u8" />
+        <button class="btn" data-load="2">Load</button>
+      </div>
+    </section>
+  </main>
+
+  <section class="paired">
+    <h3>Paired Cameras</h3>
+    <ul id="paired-list"></ul>
+  </section>
+
+  <div id="log" class="log" aria-live="polite"></div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
