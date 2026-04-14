@@ -281,8 +281,10 @@ export class DJIControl extends EventTarget {
   async scanAndPair() {
     if (!this.isSupported()) throw new Error('Web Bluetooth not available. Use Chrome on Android over HTTPS or http://localhost.');
 
+    // Show every nearby BLE device — the Action 3 may advertise only its
+    // name (not FFF0) so a service filter misses it. User picks by name.
     const device = await navigator.bluetooth.requestDevice({
-      filters: [{ services: [DJI_SERVICE] }],
+      acceptAllDevices: true,
       optionalServices: [DJI_SERVICE, 'battery_service'],
     });
 
