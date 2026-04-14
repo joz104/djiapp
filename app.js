@@ -135,5 +135,26 @@ dji.addEventListener('statusChange', () => {
 
 renderPairedList();
 updateCamChips();
+document.getElementById('btn-copy-log').addEventListener('click', async () => {
+  const text = Array.from(logEl.childNodes).map((n) => n.textContent).join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    log('ok', `Copied ${text.length} chars to clipboard.`);
+  } catch (e) {
+    // Fallback: old-school selection + execCommand
+    const range = document.createRange();
+    range.selectNodeContents(logEl);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    try { document.execCommand('copy'); log('ok', 'Copied (fallback).'); }
+    catch { log('err', `Copy failed: ${e.message}. Long-press the log area to select manually.`); }
+    sel.removeAllRanges();
+  }
+});
+document.getElementById('btn-clear-log').addEventListener('click', () => {
+  logEl.innerHTML = '';
+});
+
 log('ok', 'Field Multi-Cam ready. Pair cameras and load streams to begin.');
-log('warn', 'Protocol: DJI R-SDK (0xAA). Test pairing on Action 3 and report the log output.');
+log('warn', 'Protocol: node-osmo 0x55 (Action 3 compatible). Handshake test build.');

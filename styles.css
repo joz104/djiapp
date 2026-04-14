@@ -254,6 +254,12 @@ body {
 }
 #paired-list li button:hover { color: var(--accent); border-color: var(--accent); }
 
+.log-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 14px 0;
+}
+
 .log {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 12px;
