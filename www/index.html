@@ -12,107 +12,129 @@
   <script defer src="./vendor/hls.min.js"></script>
 </head>
 <body>
+
+  <!-- ========== HEADER ========== -->
   <header class="topbar">
     <h1>Field Multi-Cam</h1>
     <div class="top-actions">
-      <button id="btn-scan" class="btn btn-secondary">+ Pair Camera</button>
-      <button id="btn-master" class="btn btn-record" aria-pressed="false">
-        <span class="dot"></span><span id="master-label">MASTER RECORD</span>
+      <button id="btn-view" class="btn btn-secondary" title="Toggle split / stitched view">
+        <span id="view-label">View: Split</span>
       </button>
+      <button id="btn-scan" class="btn btn-secondary">+ Pair</button>
+      <button id="btn-setup" class="btn btn-secondary">Setup</button>
     </div>
   </header>
 
-  <main class="grid">
-    <!-- Camera 1 -->
+  <!-- ========== CAMERA GRID ========== -->
+  <main class="grid" data-view="split">
     <section class="cam" data-cam="1">
-      <div class="cam-header">
-        <h2>Camera 1 <span class="tag">Action 3</span></h2>
-        <div class="status">
-          <span class="chip" id="cam1-ble">BLE: —</span>
-          <span class="chip" id="cam1-bat">Batt: —</span>
-          <span class="chip" id="cam1-rec">● IDLE</span>
-        </div>
-      </div>
-      <video id="video1" class="video" controls muted playsinline></video>
-      <div class="row">
-        <input type="text" id="url1" placeholder="rtmp://192.168.x.x/live/cam1 or https://…/stream.m3u8" />
-        <button class="btn" data-load="1">Load</button>
+      <video id="video1" class="video" muted playsinline></video>
+      <div class="cam-label">Cam 1 · Action 3</div>
+      <div class="cam-chips">
+        <span class="chip" id="cam1-ble">BLE: —</span>
+        <span class="chip" id="cam1-bat">Batt: —</span>
+        <span class="chip" id="cam1-rec">● IDLE</span>
       </div>
     </section>
-
-    <!-- Camera 2 -->
     <section class="cam" data-cam="2">
-      <div class="cam-header">
-        <h2>Camera 2 <span class="tag">Action 4</span></h2>
-        <div class="status">
-          <span class="chip" id="cam2-ble">BLE: —</span>
-          <span class="chip" id="cam2-bat">Batt: —</span>
-          <span class="chip" id="cam2-rec">● IDLE</span>
-        </div>
-      </div>
-      <video id="video2" class="video" controls muted playsinline></video>
-      <div class="row">
-        <input type="text" id="url2" placeholder="rtmp://192.168.x.x/live/cam2 or https://…/stream.m3u8" />
-        <button class="btn" data-load="2">Load</button>
+      <video id="video2" class="video" muted playsinline></video>
+      <div class="cam-label">Cam 2 · Action 4</div>
+      <div class="cam-chips">
+        <span class="chip" id="cam2-ble">BLE: —</span>
+        <span class="chip" id="cam2-bat">Batt: —</span>
+        <span class="chip" id="cam2-rec">● IDLE</span>
       </div>
     </section>
   </main>
 
-  <section class="paired">
-    <h3>Paired Cameras</h3>
-    <ul id="paired-list"></ul>
-  </section>
+  <!-- ========== MASTER RECORD BAR ========== -->
+  <footer class="record-bar">
+    <button id="btn-master" class="btn-record" aria-pressed="false">
+      <span class="dot"></span>
+      <span id="master-label">MASTER RECORD</span>
+    </button>
+  </footer>
 
-  <section class="preview-control">
-    <h3>Live Preview</h3>
-    <p class="hint" id="preview-hint">Before pairing, enable your tablet's mobile hotspot (2.4 GHz — the Action 3 does not support 5 GHz). Enter its SSID and password below. Tap Start Preview to send the cameras onto the hotspot and ingest RTMP locally. Only works inside the Android APK build.</p>
-    <div class="preview-inputs">
-      <label class="field">
-        <span>Hotspot SSID</span>
-        <input type="text" id="preview-ssid" autocomplete="off" placeholder="MyTablet" />
-      </label>
-      <label class="field">
-        <span>Hotspot password</span>
-        <input type="password" id="preview-pass" autocomplete="off" placeholder="••••••••" />
-      </label>
-    </div>
-    <div class="preview-inputs">
-      <label class="field">
-        <span>Resolution</span>
-        <select id="preview-res">
-          <option value="r480p">480p</option>
-          <option value="r720p" selected>720p</option>
-          <option value="r1080p">1080p</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>FPS</span>
-        <select id="preview-fps">
-          <option value="25">25</option>
-          <option value="30" selected>30</option>
-        </select>
-      </label>
-      <label class="field">
-        <span>Bitrate (kbps)</span>
-        <select id="preview-br">
-          <option value="1000">1000</option>
-          <option value="2500" selected>2500</option>
-          <option value="5000">5000</option>
-          <option value="8000">8000</option>
-        </select>
-      </label>
-    </div>
-    <div class="preview-row">
-      <button id="btn-preview" class="btn btn-secondary">Start Preview</button>
-      <span id="preview-status" class="chip">idle</span>
-    </div>
-  </section>
-
-  <div class="log-actions">
-    <button id="btn-copy-log" class="btn btn-secondary">Copy Log</button>
-    <button id="btn-clear-log" class="btn btn-secondary">Clear Log</button>
+  <!-- ========== COLLAPSED LOG BAR ========== -->
+  <div id="log-bar" class="log-bar" role="button" tabindex="0">
+    <span class="log-bar-label">LOG</span>
+    <span id="log-latest" class="log-bar-latest">ready</span>
   </div>
-  <div id="log" class="log" aria-live="polite"></div>
+
+  <!-- ========== SETUP DRAWER (right-side slide-in) ========== -->
+  <div id="setup-backdrop" class="setup-backdrop" hidden></div>
+  <aside id="setup-drawer" class="setup-drawer">
+    <div class="drawer-header">
+      <h2>Setup</h2>
+      <button id="btn-close-setup" class="btn-close" aria-label="Close">✕</button>
+    </div>
+
+    <section class="preview-control">
+      <h3>Live Preview</h3>
+      <p class="hint" id="preview-hint">Enable your tablet's mobile hotspot on <strong>2.4 GHz</strong> (the Action 3 doesn't see 5 GHz). Enter its SSID and password below. Only works inside the Android APK build.</p>
+
+      <div class="preview-inputs">
+        <label class="field">
+          <span>Hotspot SSID</span>
+          <input type="text" id="preview-ssid" autocomplete="off" placeholder="MyTablet" />
+        </label>
+        <label class="field">
+          <span>Hotspot password</span>
+          <input type="password" id="preview-pass" autocomplete="off" placeholder="••••••••" />
+        </label>
+      </div>
+
+      <div class="preview-inputs">
+        <label class="field">
+          <span>Resolution</span>
+          <select id="preview-res">
+            <option value="r480p">480p</option>
+            <option value="r720p" selected>720p</option>
+            <option value="r1080p">1080p</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>FPS</span>
+          <select id="preview-fps">
+            <option value="25">25</option>
+            <option value="30" selected>30</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Bitrate (kbps)</span>
+          <select id="preview-br">
+            <option value="1000">1000</option>
+            <option value="2500" selected>2500</option>
+            <option value="5000">5000</option>
+            <option value="8000">8000</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="preview-row">
+        <button id="btn-preview" class="btn btn-secondary">Start Preview</button>
+        <span id="preview-status" class="chip">idle</span>
+      </div>
+    </section>
+
+    <section class="paired">
+      <h3>Paired Cameras</h3>
+      <ul id="paired-list"></ul>
+    </section>
+  </aside>
+
+  <!-- ========== LOG MODAL (expanded on tap) ========== -->
+  <div id="log-modal" class="log-modal" hidden>
+    <div class="log-modal-header">
+      <h3>Log</h3>
+      <div class="log-modal-actions">
+        <button id="btn-copy-log" class="btn btn-secondary">Copy</button>
+        <button id="btn-clear-log" class="btn btn-secondary">Clear</button>
+        <button id="btn-close-log" class="btn-close" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <div id="log" class="log" aria-live="polite"></div>
+  </div>
 
   <script type="module" src="./app.js"></script>
 </body>

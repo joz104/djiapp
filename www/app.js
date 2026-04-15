@@ -51,19 +51,6 @@ const pane2 = new VideoPane(document.getElementById('video2'), 2);
 pane1.onLog = log;
 pane2.onLog = log;
 
-document.getElementById('url1').value = pane1.restoreLastUrl();
-document.getElementById('url2').value = pane2.restoreLastUrl();
-
-document.querySelectorAll('[data-load]').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    const id = btn.getAttribute('data-load');
-    const url = document.getElementById(`url${id}`).value;
-    const pane = id === '1' ? pane1 : pane2;
-    pane.load(url);
-    log('ok', `Loading pane ${id}: ${url || '(empty)'}`);
-  });
-});
-
 document.getElementById('btn-scan').addEventListener('click', async () => {
   try {
     const session = await dji.scanAndPair();
@@ -76,28 +63,77 @@ document.getElementById('btn-scan').addEventListener('click', async () => {
 const masterBtn = document.getElementById('btn-master');
 const masterLabel = document.getElementById('master-label');
 let masterRecording = false;
+let masterRecordStartedAt = 0;
+let masterTimerHandle = null;
+
+function formatElapsed(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const mm = String(Math.floor(s / 60)).padStart(2, '0');
+  const ss = String(s % 60).padStart(2, '0');
+  return `${mm}:${ss}`;
+}
+
+function applyMasterUi() {
+  masterBtn.setAttribute('aria-pressed', String(masterRecording));
+  if (masterRecording) {
+    const elapsed = formatElapsed(Date.now() - masterRecordStartedAt);
+    masterLabel.textContent = `RECORDING ${elapsed} — TAP TO STOP`;
+  } else {
+    masterLabel.textContent = 'MASTER RECORD';
+  }
+}
+
+function startMasterTimer() {
+  stopMasterTimer();
+  masterTimerHandle = setInterval(applyMasterUi, 500);
+}
+function stopMasterTimer() {
+  if (masterTimerHandle) {
+    clearInterval(masterTimerHandle);
+    masterTimerHandle = null;
+  }
+}
 
 masterBtn.addEventListener('click', async () => {
   if (dji.pairedCameras.size === 0) {
-    log('warn', 'No cameras paired. Tap "+ Pair Camera" first.');
+    log('warn', 'No cameras paired. Tap "+ Pair" first.');
     return;
   }
-  masterRecording = !masterRecording;
-  masterBtn.setAttribute('aria-pressed', String(masterRecording));
-  masterLabel.textContent = masterRecording ? 'RECORDING — TAP TO STOP' : 'MASTER RECORD';
+  const starting = !masterRecording;
+  // Optimistic UI — the click feedback needs to be instant on a tablet.
+  masterRecording = starting;
+  if (starting) {
+    masterRecordStartedAt = Date.now();
+    startMasterTimer();
+  } else {
+    stopMasterTimer();
+  }
+  applyMasterUi();
   try {
-    const results = masterRecording ? await dji.startRecordAll() : await dji.stopRecordAll();
+    const results = starting ? await dji.startRecordAll() : await dji.stopRecordAll();
     const okCount = results.filter((r) => r.ok).length;
     log(okCount === results.length ? 'ok' : 'err',
-      `${masterRecording ? 'START' : 'STOP'} fan-out: ${okCount}/${results.length} succeeded`);
+      `${starting ? 'START' : 'STOP'} fan-out: ${okCount}/${results.length} succeeded`);
     for (const r of results) {
       if (!r.ok) log('err', `  ${r.session.device.name || r.session.device.id}: ${r.err?.message || r.err}`);
     }
+    if (okCount === 0) {
+      // Every camera rejected — roll back the UI.
+      masterRecording = !starting;
+      if (masterRecording) {
+        masterRecordStartedAt = Date.now();
+        startMasterTimer();
+      } else {
+        stopMasterTimer();
+      }
+      applyMasterUi();
+    }
   } catch (e) {
     log('err', `Record fan-out error: ${e.message}`);
-    masterRecording = !masterRecording;
-    masterBtn.setAttribute('aria-pressed', String(masterRecording));
-    masterLabel.textContent = masterRecording ? 'RECORDING — TAP TO STOP' : 'MASTER RECORD';
+    masterRecording = !starting;
+    if (masterRecording) startMasterTimer();
+    else stopMasterTimer();
+    applyMasterUi();
   }
 });
 
@@ -315,8 +351,6 @@ previewBtn.addEventListener('click', async () => {
     results.forEach((r, i) => {
       if (!r.ok) return;
       const hlsUrl = `http://localhost:8888/cam${i + 1}/index.m3u8`;
-      const urlInput = document.getElementById(`url${i + 1}`);
-      if (urlInput) urlInput.value = hlsUrl;
       const pane = i === 0 ? pane1 : pane2;
       if (pane) pane.load(hlsUrl);
     });
@@ -344,13 +378,75 @@ previewBtn.addEventListener('click', async () => {
   }
 });
 
+// ---- Setup drawer (right-side slide-in) ---------------------------------
+const setupDrawer = document.getElementById('setup-drawer');
+const setupBackdrop = document.getElementById('setup-backdrop');
+const btnSetup = document.getElementById('btn-setup');
+const btnCloseSetup = document.getElementById('btn-close-setup');
+
+function openSetup() {
+  setupDrawer.classList.add('open');
+  setupBackdrop.hidden = false;
+}
+function closeSetup() {
+  setupDrawer.classList.remove('open');
+  setupBackdrop.hidden = true;
+}
+btnSetup.addEventListener('click', openSetup);
+btnCloseSetup.addEventListener('click', closeSetup);
+setupBackdrop.addEventListener('click', closeSetup);
+
+// ---- View mode toggle (split / stitched) --------------------------------
+const VIEW_MODE_KEY = 'fmc-view-mode';
+const btnView = document.getElementById('btn-view');
+const viewLabel = document.getElementById('view-label');
+const gridEl = document.querySelector('main.grid');
+
+function applyViewMode(mode) {
+  const m = mode === 'stitched' ? 'stitched' : 'split';
+  gridEl.setAttribute('data-view', m);
+  viewLabel.textContent = m === 'stitched' ? 'View: Stitched' : 'View: Split';
+  localStorage.setItem(VIEW_MODE_KEY, m);
+}
+applyViewMode(localStorage.getItem(VIEW_MODE_KEY) || 'split');
+btnView.addEventListener('click', () => {
+  const current = gridEl.getAttribute('data-view');
+  applyViewMode(current === 'stitched' ? 'split' : 'stitched');
+});
+
+// ---- Log modal + collapsed bar ------------------------------------------
+const logBar = document.getElementById('log-bar');
+const logLatest = document.getElementById('log-latest');
+const logModal = document.getElementById('log-modal');
+const btnCloseLog = document.getElementById('btn-close-log');
+
+// Mirror the latest log line into the collapsed log bar. MutationObserver
+// keeps this decoupled from the log() function so we don't reshuffle the
+// file to define logLatest before log().
+new MutationObserver(() => {
+  const last = logEl.lastElementChild;
+  if (last) logLatest.textContent = last.textContent.replace(/^\[[\d:\s]+\]\s*/, '');
+}).observe(logEl, { childList: true });
+
+function openLogModal() {
+  logModal.hidden = false;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function closeLogModal() {
+  logModal.hidden = true;
+}
+logBar.addEventListener('click', openLogModal);
+logBar.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openLogModal(); }
+});
+btnCloseLog.addEventListener('click', closeLogModal);
+
 document.getElementById('btn-copy-log').addEventListener('click', async () => {
   const text = Array.from(logEl.childNodes).map((n) => n.textContent).join('\n');
   try {
     await navigator.clipboard.writeText(text);
     log('ok', `Copied ${text.length} chars to clipboard.`);
   } catch (e) {
-    // Fallback: old-school selection + execCommand
     const range = document.createRange();
     range.selectNodeContents(logEl);
     const sel = window.getSelection();
@@ -363,7 +459,8 @@ document.getElementById('btn-copy-log').addEventListener('click', async () => {
 });
 document.getElementById('btn-clear-log').addEventListener('click', () => {
   logEl.innerHTML = '';
+  logLatest.textContent = 'cleared';
 });
 
-log('ok', 'Field Multi-Cam ready. Pair cameras and load streams to begin.');
-log('warn', 'Protocol: node-osmo 0x55 (Action 3 compatible). Handshake test build.');
+log('ok', 'Field Multi-Cam ready. Tap Setup to configure.');
+log('warn', 'Protocol: node-osmo 0x55 (Action 3 compatible). Capacitor APK build.');
