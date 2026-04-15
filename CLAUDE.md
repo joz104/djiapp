@@ -11,25 +11,37 @@ A Web Bluetooth PWA that triggers synchronized Start/Stop Recording on two DJI O
 - **Owner**: joz104 (john@zorychta.ca)
 - **Use case**: youth soccer coach, sideline dual-cam recording
 
-## File map
+## Branch model
+
+- **`main`** — pure PWA, works on any modern Chromium-based browser with Web Bluetooth (desktop Chrome, Chrome for Android via `https://joz104.github.io/djiapp/`). This is the dev-loop branch for protocol work on the Osmo Action 3 because desktop Chrome is the fastest way to iterate on BLE.
+- **`v2-capacitor`** — pivot to a full Android app wrapped in Capacitor, with an on-device MediaMTX RTMP server for live preview. Work in progress; see `docs/ROADMAP.md` Phase 4. The PWA files live under `www/` on this branch. Android project under `android/`. Built via `.github/workflows/android-build.yml` on every push; debug APK downloadable as a workflow artifact. Local build possible with Android Studio + JDK 21.
+
+## File map (v2-capacitor branch)
 
 ```
 djiapp/
-├── index.html          App shell (dark, landscape, 2-pane grid)
-├── app.js              UI wiring: pair btn, master record, log panel, copy-log
-├── dji-control.js      BLE protocol layer — CRC tables, frame builder, DJIControl, CameraSession
-├── video-pane.js       hls.js wrapper for the 2 video previews
-├── styles.css          Dark theme, bright red record button, chips
-├── manifest.json       PWA manifest (standalone, landscape, dark)
-├── sw.js               Service worker — cache-first, `CACHE` version string
-├── vendor/
-│   ├── hls.min.js      hls.js 1.5.13, vendored (no CDN, offline)
-│   └── README.md       How to re-download
-├── icons/              Placeholder PWA icons
+├── package.json                    Root npm project — Capacitor deps only
+├── capacitor.config.json           App id, name, webDir='www'
+├── .github/workflows/
+│   └── android-build.yml           CI → debug APK artifact
+├── www/                            PWA source (served via Capacitor WebView)
+│   ├── index.html                  App shell (dark, landscape, 2-pane grid)
+│   ├── app.js                      UI wiring: pair btn, master record, log panel
+│   ├── dji-control.js              BLE protocol layer — CRCs, drivers, CameraSession
+│   ├── video-pane.js               hls.js wrapper for the 2 video previews
+│   ├── styles.css                  Dark theme, bright red record button, chips
+│   ├── manifest.json               PWA manifest (standalone, landscape, dark)
+│   ├── sw.js                       Service worker (still useful for web dev loop)
+│   ├── vendor/hls.min.js           hls.js 1.5.13, vendored
+│   └── icons/                      Placeholder PWA icons
+├── android/                        Capacitor-generated Gradle project
+│   ├── app/                        android app module
+│   ├── gradlew, gradlew.bat        Gradle wrapper
+│   └── ...
 ├── docs/
-│   ├── PROTOCOL.md     BLE protocol deep-dive (frame layout, CRCs, opcodes)
-│   └── ROADMAP.md      Phases, current state, blockers, per-session status
-└── CLAUDE.md           This file
+│   ├── PROTOCOL.md                 BLE protocol deep-dive
+│   └── ROADMAP.md                  Phases, current state, blockers, status log
+└── CLAUDE.md                       This file
 ```
 
 ## Critical gotchas
@@ -75,10 +87,16 @@ djiapp/
 
 ## How to iterate
 
-1. Edit files locally.
+### On `main` (PWA dev loop)
+1. Edit files at repo root.
 2. `git add -A && git commit -m "…" && git push` — GitHub Pages auto-deploys.
-3. Hard-refresh in the browser (or close/reopen tab) to pick up the new service worker.
+3. Hard-refresh Chrome (or close/reopen tab) to pick up the new service worker.
 4. Test via "+ Pair Camera" → paste the log → iterate.
+
+### On `v2-capacitor` (Android app dev loop)
+1. Edit files under `www/` the same way. The Capacitor project treats `www/` as the web root, so protocol-layer changes are still fast-iterated in a browser by serving `www/` locally (`cd www && python3 -m http.server 8000` then open `http://localhost:8000`).
+2. For an APK build: `git push` — the GitHub Actions workflow builds a debug APK within ~5 min and uploads it as an artifact named `field-multicam-debug-apk`. Download, sideload via `adb install app-debug.apk`. Alternative: build locally with Android Studio + JDK 21 (`cd android && ./gradlew :app:assembleDebug`).
+3. `npx cap sync android` after changing `www/` files IF you're building locally — copies `www/` into the Android assets directory. The GitHub Action does this automatically.
 
 ## Current state (keep this updated)
 

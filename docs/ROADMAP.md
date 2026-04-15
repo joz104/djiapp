@@ -32,12 +32,59 @@ Phases, current state, and open blockers. The status log at the bottom is the ru
 - [x] Multi-protocol architecture — each `CameraSession` takes a driver; `selectDriver` chooses by device name with 0x55 as safe fallback
 - [ ] Test synced record on both cameras from the master button
 
-### Phase 4 — live preview pipeline ❌
-- [ ] Decide: RTMP-to-local-server or skip live preview entirely
-- [ ] If doing it: run SRS or nginx-rtmp on a laptop / tablet
-- [ ] Use node-osmo's setupWifi + startStreaming to point cameras at the server
-- [ ] Video panes pull HLS from the server via existing hls.js path
-- [ ] Document the infra setup in docs/
+### Phase 4 — live preview pipeline via native Android app 🚧
+Decided 2026-04-14: pivot off pure-PWA and wrap the app in Capacitor so we can bundle
+an on-device RTMP server. Pure PWA can't open raw sockets. Work lives on the
+`v2-capacitor` branch; `main` stays as the working Action-3 PWA.
+
+**Architecture**
+- Capacitor wraps the existing PWA as an Android APK. Web UI unchanged.
+- Bluetooth via `@capacitor-community/bluetooth-le` (Android WebView still
+  doesn't ship Web Bluetooth in 2026 — confirmed, Chromium #1100993 open).
+  A `BleTransport` abstraction picks `webBluetoothTransport` in the browser
+  (for dev on PC) or `capacitorBleTransport` inside the APK. The 0x55 driver
+  and CRC layer don't change.
+- RTMP server: MediaMTX (Go binary, MIT, ~27 MB `linux_arm64`) bundled as
+  `android/app/src/main/jniLibs/arm64-v8a/libmediamtx.so` and exec'd from a
+  foreground service (standard "fake .so" workaround for Android Q+ exec ban).
+  Accepts two RTMP inputs on :1935, serves LL-HLS on :8888. Wrapped in a small
+  Kotlin Capacitor plugin with `start()`/`stop()`.
+- Cameras join the tablet's mobile hotspot (no internet needed) via BLE
+  `setupWifi`, then RTMP push via BLE `startStreaming` pointed at the
+  tablet's IP. Both opcodes are already in our constants from the node-osmo
+  port; just need wiring.
+- Live preview is for setup / framing only. Latency tolerance is loose.
+
+**Sub-phases** (one per session, each leaves the app in a working state)
+- [x] **4.0 scaffold** — npm init, Capacitor + Android platform + BLE plugin
+      installed, PWA files moved into `www/`, `.gitignore` covering generated
+      Android artifacts, GitHub Actions workflow at
+      `.github/workflows/android-build.yml` that builds a debug APK on every
+      push to `v2-capacitor` (+ manual dispatch). APK available as a workflow
+      artifact, no local Android Studio required.
+- [ ] **4.1 BLE transport swap** — introduce a `BleTransport` interface with
+      two concrete implementations (`webBluetoothTransport`,
+      `capacitorBleTransport`). `CameraSession` constructor takes a transport.
+      Runtime selection via `typeof window.Capacitor !== 'undefined'`. Verify
+      pair + record + auto-reconnect + battery parse still work in: (a)
+      Chrome on PC from github-pages-style serving of `www/`, (b) APK
+      sideloaded to the user's Android phone.
+- [ ] **4.2 RTMP plugin** — download MediaMTX, bundle via `jniLibs/`, write a
+      Kotlin Capacitor plugin (`FieldCamRtmp`) with a foreground service
+      running the binary. Permissions: `FOREGROUND_SERVICE`,
+      `FOREGROUND_SERVICE_MEDIA_PROJECTION`, notification channel. Verify
+      `curl http://localhost:8888` from inside the app's WebView returns the
+      MediaMTX status page while the service is running.
+- [ ] **4.3 camera streaming wire-up** — implement `setupWifi(ssid, password)`
+      and `startStreaming(rtmpUrl)` messages in the 0x55 driver. UI: "Setup
+      Preview" button → prompts SSID/password (persisted to localStorage) →
+      fires BLE commands → existing video pane points at
+      `http://localhost:8888/cam1/index.m3u8`. Test with one camera, then
+      two.
+- [ ] **4.4 polish and ship** — hotspot detection + SSID auto-fill, error
+      states for "camera failed to join WiFi" and "RTMP server died",
+      foreground-service UX, sign a release APK and publish. Decide whether
+      `v2-capacitor` merges back into `main` or whether `main` stays PWA.
 
 ### Phase 5 — polish ❌
 - [ ] Connection state recovery (auto-reconnect on disconnect during a match)
@@ -74,6 +121,12 @@ Append one entry per session. Keep each entry brief — what changed, what we le
 - Set up project documentation (CLAUDE.md, README, PROTOCOL, ROADMAP).
 - Commits: `init` → `Vendor hls.js` → `Use acceptAllDevices` → `Switch to 0x55 protocol`.
 - Next session: log the full byte exchange during a pair-code-accept flow, then start the SD record opcode hunt (lean toward sniffing Mimo on Android).
+
+### 2026-04-14 (later, pt 3) — Phase 4 pivot, Capacitor scaffold landed on v2-capacitor
+- Decided to wrap the app in Capacitor rather than defer Phase 4. Research confirmed: Android WebView still has no Web Bluetooth in 2026 (Chromium #1100993), so the PWA's BLE code must be ported onto `@capacitor-community/bluetooth-le` inside the wrap. The driver refactor from earlier today pays off here — only the transport layer needs to swap, not the protocol code.
+- MediaMTX is the chosen RTMP server: Go binary, ~27 MB, official `linux_arm64` build, MIT license, RTMP in + native LL-HLS out (no ffmpeg transmux). Bundling strategy: drop it into `jniLibs/arm64-v8a/libmediamtx.so` and exec from `nativeLibraryDir` — standard Android Q+ workaround for the exec-from-app-dir ban.
+- Scaffolded Capacitor on the `v2-capacitor` branch: `npm init`, installed `@capacitor/core`, `@capacitor/cli`, `@capacitor/android`, `@capacitor-community/bluetooth-le`. `npx cap init` with app id `ca.zorychta.djiapp` and web dir `www`. Moved all PWA files into `www/`. `npx cap add android` generated the Gradle project. GitHub Actions workflow at `.github/workflows/android-build.yml` builds a debug APK on every push to `v2-capacitor` and is manually dispatchable, producing `field-multicam-debug-apk` as a workflow artifact. No local Android Studio needed.
+- Next: phase 4.1 BLE transport swap.
 
 ### 2026-04-14 (later, pt 2) — Field-ready polish + multi-protocol refactor
 - Parsed battery % from the status-push channel (offset 20) — now surfaces on each Cam chip and updates as the pack drains. Suppressed the 1 Hz raw log for status pushes to keep the log readable.

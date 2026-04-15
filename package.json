@@ -1,0 +1,21 @@
+{
+  "name": "djiapp",
+  "version": "1.0.0",
+  "description": "A Progressive Web App that triggers synchronized Start/Stop Recording on two DJI Osmo Action cameras (Action 3 and Action 4) over Web Bluetooth, from an Android tablet on a soccer sideline.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@capacitor-community/bluetooth-le": "^8.1.3",
+    "@capacitor/android": "^8.3.0",
+    "@capacitor/cli": "^7.6.1",
+    "@capacitor/core": "^8.3.0"
+  }
+}

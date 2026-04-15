@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Field Multi-Cam</string>
+    <string name="title_activity_main">Field Multi-Cam</string>
+    <string name="package_name">ca.zorychta.djiapp</string>
+    <string name="custom_url_scheme">ca.zorychta.djiapp</string>
+</resources>
