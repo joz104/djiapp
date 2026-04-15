@@ -343,7 +343,9 @@ const dji55Driver = {
       txId: SETUP_WIFI_TXID,
       type: SETUP_WIFI_TYPE,
       payload: buildSetupWifiPayload(ssid, password),
-      timeoutMs: 30000, // camera has to scan + associate + DHCP on the hotspot
+      // Observed: camera spends ~30s scanning for the SSID before giving up
+      // with an error, so our timeout has to clear that + a little buffer.
+      timeoutMs: 45000,
     };
   },
 
@@ -531,17 +533,28 @@ export class DJIControl extends EventTarget {
     // response before the next. Skipping stopStream or prepareStream
     // causes setupWifi to silently time out (camera ignores it if it's
     // not in the right state).
+    // Helper: await a frame, verify the response indicates success. Camera
+    // responses use payload[0] as a status byte — 0x00 = success, anything
+    // else is an error code we should surface with context instead of
+    // plowing ahead into the next step.
+    const step = async (s, label, frame) => {
+      this.log('ok', `${s.label()} → ${label}`);
+      const resp = await s.sendAndAwait(frame);
+      const status = resp.payload.length ? resp.payload[0] : 0;
+      if (status !== 0x00) {
+        const hexPayload = Array.from(resp.payload).map(b => b.toString(16).padStart(2, '0')).join(' ');
+        throw new Error(`${label} rejected by camera (status 0x${status.toString(16)}, full payload: ${hexPayload})`);
+      }
+      return resp;
+    };
+
     return Promise.all(sessions.map(async (s, i) => {
       const rtmpUrl = `${baseRtmpUrl}/cam${i + 1}`;
       try {
-        this.log('ok', `${s.label()} → stopStreaming (cleanup)`);
-        await s.sendAndAwait(s.driver.cleanupStreamFrame());
-        this.log('ok', `${s.label()} → preparingToLivestream`);
-        await s.sendAndAwait(s.driver.prepareStreamFrame());
-        this.log('ok', `${s.label()} → setupWifi "${ssid}"`);
-        await s.sendAndAwait(s.driver.setupWifiFrame(ssid, password));
-        this.log('ok', `${s.label()} → startStreaming ${rtmpUrl}`);
-        await s.sendAndAwait(s.driver.startStreamFrame({ rtmpUrl, resolution, fps, bitrateKbps }));
+        await step(s, 'stopStreaming (cleanup)', s.driver.cleanupStreamFrame());
+        await step(s, 'preparingToLivestream', s.driver.prepareStreamFrame());
+        await step(s, `setupWifi "${ssid}" (ensure hotspot is 2.4 GHz — Action 3 does not support 5 GHz)`, s.driver.setupWifiFrame(ssid, password));
+        await step(s, `startStreaming ${rtmpUrl}`, s.driver.startStreamFrame({ rtmpUrl, resolution, fps, bitrateKbps }));
         s.streaming = true;
         s.streamUrl = rtmpUrl;
         this._emitStatus(s);
