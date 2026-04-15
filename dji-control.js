@@ -141,6 +141,24 @@ const RECORD_STOP_PAYLOAD  = new Uint8Array([0x00]);
 let   _recTxId = 0x9001;
 function nextRecTxId() { _recTxId = (_recTxId + 1) & 0xFFFF; return _recTxId; }
 
+// ---- Status push (camera -> remote, ~1 Hz) -----------------------------
+// Empirically observed 34-byte payload. Only offset 20 is decoded so far
+// (battery %). Other bytes vary across sessions but we haven't nailed them
+// down — grow this parser as we decode more fields. Offset 17 appears
+// session-specific (temperature? storage? unclear), offsets 27-28 are the
+// constant `20 04` marker, offset 33 is always `01`.
+const STATUS_PUSH_TARGET = 0x0205;
+const STATUS_PUSH_TYPE   = 0x020d00;
+const STATUS_PUSH_BATTERY_OFFSET = 20;
+
+function parseStatusPush(payload) {
+  const out = {};
+  if (payload.length > STATUS_PUSH_BATTERY_OFFSET) {
+    out.battery = payload[STATUS_PUSH_BATTERY_OFFSET];
+  }
+  return out;
+}
+
 // Hard-coded 33-byte pair token (ASCII " 284ae5b8d76b3375a04a6417ad71bea3")
 // followed by djiPackString("love") = [0x04, 'l','o','v','e'].
 const PAIR_TOKEN = new Uint8Array([
@@ -285,9 +303,11 @@ class CameraSession {
     this.onGattDisconnected = this.onGattDisconnected.bind(this);
   }
 
+  label() { return this.device.name || this.device.id; }
+
   onGattDisconnected() {
     this.connected = false;
-    this.control.log('warn', `${this.device.name || this.device.id} disconnected`);
+    this.control.log('warn', `${this.label()} disconnected`);
     this.control._emitStatus(this);
   }
 
@@ -351,6 +371,17 @@ class CameraSession {
   }
 
   dispatchFrame(f) {
+    // Camera status push (~1 Hz) — handled quietly so the log doesn't flood.
+    if (f.target === STATUS_PUSH_TARGET && f.type === STATUS_PUSH_TYPE) {
+      const s = parseStatusPush(f.payload);
+      if (typeof s.battery === 'number' && s.battery !== this.battery) {
+        this.battery = s.battery;
+        this.control.log('ok', `${this.label()} batt=${s.battery}%`);
+        this.control._emitStatus(this);
+      }
+      return;
+    }
+
     this.control.log('ok', `⇐ target=0x${f.target.toString(16)} txId=0x${f.txId.toString(16)} type=0x${f.type.toString(16)} payload=${hex(f.payload)}`);
     const waiter = this.pendingByTxId.get(f.txId);
     if (waiter) {
