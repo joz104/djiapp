@@ -1,10 +1,11 @@
-const CACHE = 'field-cam-v12';
+const CACHE = 'field-cam-v13';
 const SHELL = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './dji-control.js',
+  './ble-transport.js',
   './video-pane.js',
   './manifest.json',
   './vendor/hls.min.js',

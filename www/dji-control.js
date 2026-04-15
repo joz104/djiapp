@@ -1,4 +1,6 @@
-// DJIControl — Web Bluetooth control for DJI Osmo Action cameras.
+import { selectTransport } from './ble-transport.js';
+
+// DJIControl — BLE control for DJI Osmo Action cameras.
 //
 // Multi-protocol architecture: DJIControl owns a Map of CameraSession
 // instances, each of which delegates every byte of its I/O to a
@@ -288,9 +290,16 @@ export class DJIControl extends EventTarget {
     super();
     /** @type {Map<string, CameraSession>} */
     this.pairedCameras = new Map();
+    this.transport = selectTransport();
+    this._transportReady = null;
   }
 
-  isSupported() { return 'bluetooth' in navigator; }
+  isSupported() {
+    // True if either transport can work in this environment.
+    if (typeof window === 'undefined') return false;
+    if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) return true;
+    return 'bluetooth' in navigator;
+  }
 
   log(kind, msg) { this.dispatchEvent(new CustomEvent('log', { detail: { kind, msg } })); }
 
@@ -298,29 +307,40 @@ export class DJIControl extends EventTarget {
     this.dispatchEvent(new CustomEvent('statusChange', { detail: { session } }));
   }
 
-  async scanAndPair() {
-    if (!this.isSupported()) throw new Error('Web Bluetooth not available. Use Chrome on Android over HTTPS or http://localhost.');
+  async _ensureTransport() {
+    if (!this._transportReady) {
+      this._transportReady = this.transport.initialize().catch((e) => {
+        this._transportReady = null;
+        throw e;
+      });
+    }
+    return this._transportReady;
+  }
 
-    const device = await navigator.bluetooth.requestDevice({
-      acceptAllDevices: true,
+  async scanAndPair() {
+    if (!this.isSupported()) throw new Error('BLE not available. Use Chrome on Android over HTTPS/localhost, or the APK build.');
+    await this._ensureTransport();
+
+    const handle = await this.transport.requestDevice({
       optionalServices: [DJI_SERVICE, 'battery_service'],
     });
 
-    const driver = selectDriver({ device });
-    this.log('ok', `Selected ${device.name || device.id}. Driver: ${driver.name}. Connecting GATT…`);
+    // selectDriver wants a `device` shape; give it a shim with just the name.
+    const driver = selectDriver({ device: { name: handle.name } });
+    this.log('ok', `Selected ${handle.name || handle.id}. Transport: ${this.transport.name}. Driver: ${driver.name}. Connecting GATT…`);
 
-    const session = new CameraSession(device, this, driver);
-    this.pairedCameras.set(device.id, session);
+    const session = new CameraSession(handle, this, driver, this.transport);
+    this.pairedCameras.set(handle.id, session);
     this._emitStatus(session);
 
     try {
       await session.connect();
       await session.handshake();
-      this.log('ok', `Handshake complete with ${device.name || device.id}`);
+      this.log('ok', `Handshake complete with ${handle.name || handle.id}`);
     } catch (e) {
-      this.log('err', `Pairing failed for ${device.name || device.id}: ${e.message}`);
+      this.log('err', `Pairing failed for ${handle.name || handle.id}: ${e.message}`);
       session.intentionalDisconnect = true; // prevent auto-reconnect on a failed first pair
-      this.pairedCameras.delete(device.id);
+      this.pairedCameras.delete(handle.id);
       try { session.disconnect(); } catch {}
       this._emitStatus(session);
       throw e;
@@ -396,15 +416,12 @@ class CameraSession {
   // without the coach having to notice, so there's no retry cap.
   static BACKOFF_MS = [0, 2000, 5000, 15000, 30000, 60000];
 
-  constructor(device, control, driver) {
-    this.device = device;
+  constructor(handle, control, driver, transport) {
+    this.handle = handle;          // opaque transport handle
+    this.device = handle;          // kept for backward-compat in app.js chip render
     this.control = control;
     this.driver = driver;
-    this.server = null;
-    this.service = null;
-    this.writeChar = null;
-    this.notifyChar = null;
-    this.notifyChar2 = null;
+    this.transport = transport;
     this.connected = false;
     this.recording = false;
     this.battery = null;
@@ -417,7 +434,7 @@ class CameraSession {
     this.onGattDisconnected = this.onGattDisconnected.bind(this);
   }
 
-  label() { return this.device.name || this.device.id; }
+  label() { return this.handle.name || this.handle.id || 'camera'; }
 
   onGattDisconnected() {
     this.connected = false;
@@ -485,29 +502,22 @@ class CameraSession {
   }
 
   async connect() {
-    this.device.addEventListener('gattserverdisconnected', this.onGattDisconnected);
-    this.server = await this.device.gatt.connect();
-    this.service = await this.server.getPrimaryService(DJI_SERVICE);
-    this.writeChar = await this.service.getCharacteristic(DJI_CHAR_WRITE);
-    this.notifyChar = await this.service.getCharacteristic(DJI_CHAR_NOTIFY);
-    try {
-      this.notifyChar2 = await this.service.getCharacteristic(DJI_CHAR_NOTIFY2);
-    } catch { /* fff5 may not exist */ }
+    await this.transport.connect(this.handle, { onDisconnect: this.onGattDisconnected });
 
-    this.notifyChar.addEventListener('characteristicvaluechanged', (ev) => this.onNotification(ev.target.value));
-    await this.notifyChar.startNotifications();
-    if (this.notifyChar2) {
-      this.notifyChar2.addEventListener('characteristicvaluechanged', (ev) => this.onNotification(ev.target.value));
-      try { await this.notifyChar2.startNotifications(); } catch {}
+    const onRx = (dv) => this.onNotification(dv);
+    await this.transport.startNotifications(this.handle, DJI_SERVICE, DJI_CHAR_NOTIFY, onRx);
+    try {
+      await this.transport.startNotifications(this.handle, DJI_SERVICE, DJI_CHAR_NOTIFY2, onRx);
+    } catch {
+      // fff5 may not exist on some firmwares; non-fatal.
     }
+
     this.connected = true;
-    this.control.log('ok', `GATT connected, notifications active`);
+    this.control.log('ok', `GATT connected via ${this.transport.name}, notifications active`);
   }
 
   disconnect() {
-    try {
-      if (this.server && this.server.connected) this.server.disconnect();
-    } catch {}
+    try { this.transport.disconnect(this.handle); } catch {}
     this.connected = false;
   }
 
@@ -579,21 +589,11 @@ class CameraSession {
       this.pendingByTxId.set(txId, { resolve, reject, timer });
     });
 
-    // Try writeWithoutResponse first (matches node-osmo's writeAsync(..., false));
-    // fall back to writeValueWithResponse if the characteristic doesn't allow it.
     try {
-      if (this.writeChar.writeValueWithoutResponse) {
-        await this.writeChar.writeValueWithoutResponse(frame);
-      } else {
-        await this.writeChar.writeValue(frame);
-      }
+      await this.transport.writeWithoutResponse(this.handle, DJI_SERVICE, DJI_CHAR_WRITE, frame);
     } catch (e) {
-      this.control.log('warn', `writeWithoutResponse failed (${e.message}), trying writeValue`);
-      try { await this.writeChar.writeValue(frame); }
-      catch (e2) {
-        this.pendingByTxId.delete(txId);
-        throw new Error(`write failed: ${e2.message}`);
-      }
+      this.pendingByTxId.delete(txId);
+      throw new Error(`write failed: ${e.message}`);
     }
 
     return promise;
