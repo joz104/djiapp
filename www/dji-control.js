@@ -324,13 +324,16 @@ const dji55Driver = {
   // node-osmo's DjiPreparingToLivestreamMessagePayload static payload —
   // NOT empty, empirically the camera returns error 0xda on an empty
   // payload and then refuses all subsequent commands.
+  //
+  // The camera takes 5-30s to actually transition state (it's switching
+  // the whole camera into livestream mode), so the timeout is generous.
   prepareStreamFrame() {
     return {
       target: PREP_STREAM_TARGET,
       txId: PREP_STREAM_TXID,
       type: PREP_STREAM_TYPE,
       payload: new Uint8Array([0x1a]),
-      timeoutMs: 5000,
+      timeoutMs: 30000,
     };
   },
 
@@ -340,7 +343,7 @@ const dji55Driver = {
       txId: SETUP_WIFI_TXID,
       type: SETUP_WIFI_TYPE,
       payload: buildSetupWifiPayload(ssid, password),
-      timeoutMs: 15000,
+      timeoutMs: 30000, // camera has to scan + associate + DHCP on the hotspot
     };
   },
 
@@ -350,7 +353,7 @@ const dji55Driver = {
       txId: START_STREAM_TXID,
       type: START_STREAM_TYPE,
       payload: buildStartStreamPayload(opts),
-      timeoutMs: 15000,
+      timeoutMs: 30000, // camera opens RTMP TCP + handshakes with MediaMTX
     };
   },
 
