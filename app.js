@@ -78,6 +78,12 @@ masterBtn.addEventListener('click', async () => {
 });
 
 const pairedListEl = document.getElementById('paired-list');
+function sessionStateText(session) {
+  if (session.connected) return 'Connected';
+  if (session.reconnecting) return `Reconnecting… (attempt ${session.reconnectAttempt})`;
+  return 'Disconnected';
+}
+
 function renderPairedList() {
   pairedListEl.innerHTML = '';
   for (const session of dji.pairedCameras.values()) {
@@ -89,8 +95,7 @@ function renderPairedList() {
     const meta = document.createElement('div');
     meta.className = 'meta';
     const batt = session.battery == null ? '—' : `${session.battery}%`;
-    const state = session.connected ? 'Connected' : 'Disconnected';
-    meta.textContent = `${state} • Battery ${batt} • ${session.recording ? '● REC' : 'idle'}`;
+    meta.textContent = `${sessionStateText(session)} • Battery ${batt} • ${session.recording ? '● REC' : 'idle'}`;
     left.appendChild(name);
     left.appendChild(meta);
     const btn = document.createElement('button');
@@ -119,8 +124,16 @@ function updateCamChips() {
       rec.textContent = '● IDLE'; rec.className = 'chip';
       return;
     }
-    ble.textContent = cam.connected ? 'BLE: ✓' : 'BLE: ✗';
-    ble.className = 'chip ' + (cam.connected ? 'ok' : 'warn');
+    if (cam.connected) {
+      ble.textContent = 'BLE: ✓';
+      ble.className = 'chip ok';
+    } else if (cam.reconnecting) {
+      ble.textContent = 'BLE: ↻';
+      ble.className = 'chip warn';
+    } else {
+      ble.textContent = 'BLE: ✗';
+      ble.className = 'chip warn';
+    }
     bat.textContent = cam.battery == null ? 'Batt: —' : `Batt: ${cam.battery}%`;
     bat.className = 'chip ' + (cam.battery == null ? '' : cam.battery < 20 ? 'warn' : 'ok');
     rec.textContent = cam.recording ? '● REC' : '● IDLE';

@@ -211,6 +211,7 @@ export class DJIControl extends EventTarget {
       this.log('ok', `Handshake complete with ${device.name || device.id}`);
     } catch (e) {
       this.log('err', `Pairing failed for ${device.name || device.id}: ${e.message}`);
+      session.intentionalDisconnect = true; // prevent auto-reconnect on a failed first pair
       this.pairedCameras.delete(device.id);
       try { session.disconnect(); } catch {}
       this._emitStatus(session);
@@ -224,6 +225,8 @@ export class DJIControl extends EventTarget {
   async disconnect(deviceId) {
     const s = this.pairedCameras.get(deviceId);
     if (!s) return;
+    s.intentionalDisconnect = true;
+    s._cancelReconnect();
     s.disconnect();
     this.pairedCameras.delete(deviceId);
     this._emitStatus(s);
@@ -287,6 +290,12 @@ export class DJIControl extends EventTarget {
 
 // ---- CameraSession ------------------------------------------------------
 class CameraSession {
+  // Reconnect backoff in ms. Last value repeats indefinitely.
+  // Field use case: 60-90 min soccer matches, cameras may drop and come back
+  // minutes later when a player runs by the tripod. We want to self-heal
+  // without the coach having to notice, so there's no retry cap.
+  static BACKOFF_MS = [0, 2000, 5000, 15000, 30000, 60000];
+
   constructor(device, control) {
     this.device = device;
     this.control = control;
@@ -300,6 +309,10 @@ class CameraSession {
     this.battery = null;
     this.rxBuffer = new Uint8Array(0);
     this.pendingByTxId = new Map(); // txId -> { resolve, reject, timer }
+    this.intentionalDisconnect = false;
+    this.reconnecting = false;
+    this.reconnectAttempt = 0;
+    this._reconnectTimer = null;
     this.onGattDisconnected = this.onGattDisconnected.bind(this);
   }
 
@@ -307,8 +320,67 @@ class CameraSession {
 
   onGattDisconnected() {
     this.connected = false;
+    this._clearPending('GATT disconnected');
+    this.rxBuffer = new Uint8Array(0);
     this.control.log('warn', `${this.label()} disconnected`);
     this.control._emitStatus(this);
+    if (this.intentionalDisconnect) return;
+    // session.recording is intentionally NOT cleared — the camera keeps
+    // recording to SD across a BLE drop, so the flag stays true and we
+    // won't re-send a start on reconnect.
+    this._scheduleReconnect();
+  }
+
+  _clearPending(reason) {
+    for (const [, w] of this.pendingByTxId) {
+      clearTimeout(w.timer);
+      w.reject(new Error(reason));
+    }
+    this.pendingByTxId.clear();
+  }
+
+  _cancelReconnect() {
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+    this.reconnecting = false;
+    this.reconnectAttempt = 0;
+  }
+
+  _scheduleReconnect() {
+    if (this.reconnecting) return;
+    this.reconnecting = true;
+    this.reconnectAttempt = 0;
+    this._tryReconnect();
+  }
+
+  // Web Bluetooth gotcha: the same BluetoothDevice object retains its user
+  // permission across GATT disconnects as long as the session is held in
+  // pairedCameras and the tab stays foregrounded — no re-prompt needed.
+  // Android Chrome occasionally throws NetworkError on a first retry; the
+  // backoff schedule absorbs that.
+  _tryReconnect() {
+    if (this.intentionalDisconnect) { this._cancelReconnect(); return; }
+    const i = Math.min(this.reconnectAttempt, CameraSession.BACKOFF_MS.length - 1);
+    const delay = CameraSession.BACKOFF_MS[i];
+    this.reconnectAttempt++;
+    this.control.log('warn', `Reconnect attempt ${this.reconnectAttempt} for ${this.label()} in ${delay}ms`);
+    this.control._emitStatus(this);
+    this._reconnectTimer = setTimeout(async () => {
+      this._reconnectTimer = null;
+      if (this.intentionalDisconnect) return;
+      try {
+        await this.connect();
+        await this.handshake();
+        this.control.log('ok', `Reconnected ${this.label()}`);
+        this._cancelReconnect();
+        this.control._emitStatus(this);
+      } catch (e) {
+        this.control.log('err', `Reconnect failed for ${this.label()}: ${e.message}`);
+        this._tryReconnect();
+      }
+    }, delay);
   }
 
   async connect() {
