@@ -45,6 +45,7 @@
         <span class="chip" id="cam2-rec">● IDLE</span>
       </div>
     </section>
+    <canvas id="stitch-canvas" class="stitch-canvas"></canvas>
   </main>
 
   <!-- ========== MASTER RECORD BAR ========== -->
@@ -114,6 +115,28 @@
       <div class="preview-row">
         <button id="btn-preview" class="btn btn-secondary">Start Preview</button>
         <span id="preview-status" class="chip">idle</span>
+      </div>
+    </section>
+
+    <section class="stitch-control">
+      <h3>Stitched View</h3>
+      <p class="hint">One-time calibration. Set your camera's horizontal FoV (around 80° for the Action 3 in livestream mode) and the angle between the two cameras mounted on the tripod. Used only when View is set to Stitched.</p>
+      <div class="preview-inputs">
+        <label class="field">
+          <span>Horizontal FoV (°)</span>
+          <input type="number" id="stitch-fov" min="20" max="180" step="1" value="80" />
+        </label>
+        <label class="field">
+          <span>Angle between (°)</span>
+          <input type="number" id="stitch-angle" min="0" max="180" step="1" value="0" />
+        </label>
+        <label class="field">
+          <span>Blend</span>
+          <select id="stitch-blend">
+            <option value="feather" selected>Feather (smooth)</option>
+            <option value="hard">Hard seam (calibration)</option>
+          </select>
+        </label>
       </div>
     </section>
 

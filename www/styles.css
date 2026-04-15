@@ -104,24 +104,44 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
 }
+/* Stitched mode: a single <canvas> overlays the grid, reading frames from
+   the two <video> elements which are hidden but still playing. Chips and
+   labels stay visible as absolute overlays at the top corners. */
+.stitch-canvas { display: none; }
+
 .grid[data-view="stitched"] {
-  display: flex;
-  gap: 0;
+  position: relative;
+  display: block;
   padding: 10px;
 }
+.grid[data-view="stitched"] .stitch-canvas {
+  display: block;
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  bottom: 10px;
+  left: 10px;
+  width: calc(100% - 20px);
+  height: calc(100% - 20px);
+  background: #000;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  object-fit: contain;
+}
 .grid[data-view="stitched"] .cam {
-  flex: 1;
-  border-radius: 0;
+  position: absolute;
+  top: 10px;
+  height: 48px;
+  width: calc(50% - 10px);
+  background: transparent;
+  border: none;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 2;
 }
-.grid[data-view="stitched"] .cam:first-child {
-  border-right: 2px dashed var(--accent);
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-}
-.grid[data-view="stitched"] .cam:last-child {
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-}
+.grid[data-view="stitched"] .cam:first-child { left: 10px; }
+.grid[data-view="stitched"] .cam:last-child  { right: 10px; }
+.grid[data-view="stitched"] .cam .video { display: none; }
 
 .cam {
   position: relative;

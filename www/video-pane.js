@@ -5,6 +5,9 @@
 
 export class VideoPane {
   constructor(videoEl, paneId) {
+    // `videoEl` is exposed as a semi-public property. StitchRenderer in
+    // app.js reads pane1.videoEl / pane2.videoEl directly to drawImage
+    // the current frame into its canvas at rAF rate in stitched view.
     this.videoEl = videoEl;
     this.paneId = paneId;
     this.hls = null;

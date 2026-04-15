@@ -1,6 +1,119 @@
 import { DJIControl } from './dji-control.js';
 import { VideoPane } from './video-pane.js';
 
+// ---- StitchRenderer ------------------------------------------------------
+// Canvas 2D compositor that draws both camera video elements into a single
+// wide canvas at 30 fps. Used by the "Stitched" view mode. The two streams
+// are positioned based on a one-time calibration (FoV + angle between
+// cameras), then blended across the overlap zone either with a feathered
+// alpha ramp (default) or a hard seam (calibration mode).
+//
+// NOT a real homographic stitch — straight lines won't stay perfectly
+// straight across the seam — but good enough for live framing on a
+// tripod-mounted pair where calibration is static.
+class StitchRenderer {
+  constructor(canvas, videoA, videoB) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d', { alpha: false });
+    this.videoA = videoA;
+    this.videoB = videoB;
+    this.fovDeg = 80;
+    this.angleDeg = 0;
+    this.blend = 'feather';
+    this.running = false;
+    this._rafHandle = 0;
+    this._mask = document.createElement('canvas');
+    this._maskCtx = this._mask.getContext('2d');
+  }
+
+  setCalibration({ fovDeg, angleDeg, blend }) {
+    if (Number.isFinite(fovDeg))   this.fovDeg   = Math.max(20, Math.min(180, fovDeg));
+    if (Number.isFinite(angleDeg)) this.angleDeg = Math.max(0,  Math.min(180, angleDeg));
+    if (blend) this.blend = blend;
+  }
+
+  start() {
+    if (this.running) return;
+    this.running = true;
+    const tick = () => {
+      if (!this.running) return;
+      this.draw();
+      this._rafHandle = requestAnimationFrame(tick);
+    };
+    this._rafHandle = requestAnimationFrame(tick);
+  }
+
+  stop() {
+    this.running = false;
+    if (this._rafHandle) cancelAnimationFrame(this._rafHandle);
+    this._rafHandle = 0;
+  }
+
+  draw() {
+    const a = this.videoA, b = this.videoB;
+    const wA = a.videoWidth  || 0;
+    const hA = a.videoHeight || 0;
+    const wB = b.videoWidth  || 0;
+    const hB = b.videoHeight || 0;
+
+    // If neither source has loaded a frame yet, paint a placeholder.
+    if (!wA && !wB) {
+      if (this.canvas.width !== 640)  this.canvas.width = 640;
+      if (this.canvas.height !== 360) this.canvas.height = 360;
+      this.ctx.fillStyle = '#0b0b0f';
+      this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      return;
+    }
+
+    // If only one side has a frame, draw just that one full-bleed.
+    if (!wA || !wB) {
+      const src = wA ? a : b;
+      const sw = wA || wB, sh = hA || hB;
+      if (this.canvas.width !== sw) this.canvas.width = sw;
+      if (this.canvas.height !== sh) this.canvas.height = sh;
+      this.ctx.drawImage(src, 0, 0, sw, sh);
+      return;
+    }
+
+    const h = Math.max(hA, hB);
+    const overlapFrac = Math.max(0, Math.min(1, (this.fovDeg - this.angleDeg) / this.fovDeg));
+    const overlapPx = Math.round(wA * overlapFrac);
+    const outW = wA + wB - overlapPx;
+
+    if (this.canvas.width !== outW) this.canvas.width = outW;
+    if (this.canvas.height !== h)   this.canvas.height = h;
+
+    const ctx = this.ctx;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, outW, h);
+
+    if (this.blend === 'hard' || overlapPx === 0) {
+      ctx.drawImage(a, 0, 0, wA, h);
+      ctx.drawImage(b, wA - overlapPx, 0, wB, h);
+      return;
+    }
+
+    // Feather: draw cam2 first (full), then cam1 with its right edge
+    // fading out across the overlap zone, so cam2 shows through there.
+    ctx.drawImage(b, wA - overlapPx, 0, wB, h);
+
+    if (this._mask.width !== wA) this._mask.width = wA;
+    if (this._mask.height !== h) this._mask.height = h;
+    const mctx = this._maskCtx;
+    mctx.globalCompositeOperation = 'source-over';
+    mctx.clearRect(0, 0, wA, h);
+    mctx.drawImage(a, 0, 0, wA, h);
+    mctx.globalCompositeOperation = 'destination-in';
+    const grad = mctx.createLinearGradient(wA - overlapPx, 0, wA, 0);
+    grad.addColorStop(0, 'rgba(0,0,0,1)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    mctx.fillStyle = grad;
+    mctx.fillRect(wA - overlapPx, 0, overlapPx, h);
+    mctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(this._mask, 0, 0, wA, h);
+  }
+}
+
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch((e) => log('err', `SW register failed: ${e.message}`));
 }
@@ -396,17 +509,51 @@ btnSetup.addEventListener('click', openSetup);
 btnCloseSetup.addEventListener('click', closeSetup);
 setupBackdrop.addEventListener('click', closeSetup);
 
-// ---- View mode toggle (split / stitched) --------------------------------
+// ---- View mode toggle (split / stitched) + stitch renderer --------------
 const VIEW_MODE_KEY = 'fmc-view-mode';
 const btnView = document.getElementById('btn-view');
 const viewLabel = document.getElementById('view-label');
 const gridEl = document.querySelector('main.grid');
+
+const stitchCanvas = document.getElementById('stitch-canvas');
+const stitchFov    = document.getElementById('stitch-fov');
+const stitchAngle  = document.getElementById('stitch-angle');
+const stitchBlend  = document.getElementById('stitch-blend');
+const STITCH_FOV_KEY   = 'fmc-stitch-fov';
+const STITCH_ANGLE_KEY = 'fmc-stitch-angle';
+const STITCH_BLEND_KEY = 'fmc-stitch-blend';
+stitchFov.value   = localStorage.getItem(STITCH_FOV_KEY)   || stitchFov.value;
+stitchAngle.value = localStorage.getItem(STITCH_ANGLE_KEY) || stitchAngle.value;
+stitchBlend.value = localStorage.getItem(STITCH_BLEND_KEY) || stitchBlend.value;
+
+const stitcher = new StitchRenderer(stitchCanvas, pane1.videoEl, pane2.videoEl);
+stitcher.setCalibration({
+  fovDeg: Number(stitchFov.value),
+  angleDeg: Number(stitchAngle.value),
+  blend: stitchBlend.value,
+});
+
+function onStitchCalibChange() {
+  stitcher.setCalibration({
+    fovDeg: Number(stitchFov.value),
+    angleDeg: Number(stitchAngle.value),
+    blend: stitchBlend.value,
+  });
+  localStorage.setItem(STITCH_FOV_KEY, stitchFov.value);
+  localStorage.setItem(STITCH_ANGLE_KEY, stitchAngle.value);
+  localStorage.setItem(STITCH_BLEND_KEY, stitchBlend.value);
+}
+stitchFov.addEventListener('input', onStitchCalibChange);
+stitchAngle.addEventListener('input', onStitchCalibChange);
+stitchBlend.addEventListener('change', onStitchCalibChange);
 
 function applyViewMode(mode) {
   const m = mode === 'stitched' ? 'stitched' : 'split';
   gridEl.setAttribute('data-view', m);
   viewLabel.textContent = m === 'stitched' ? 'View: Stitched' : 'View: Split';
   localStorage.setItem(VIEW_MODE_KEY, m);
+  if (m === 'stitched') stitcher.start();
+  else stitcher.stop();
 }
 applyViewMode(localStorage.getItem(VIEW_MODE_KEY) || 'split');
 btnView.addEventListener('click', () => {
