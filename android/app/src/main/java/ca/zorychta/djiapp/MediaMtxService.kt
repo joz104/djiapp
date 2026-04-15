@@ -73,10 +73,14 @@ class MediaMtxService : Service() {
 
         val notification = buildNotification("Starting RTMP server…")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // connectedDevice matches the manifest declaration. The service
+            // exists to ingest streams from BLE-connected cameras, which
+            // Android 14+ accepts as a valid use of this FGS type without
+            // needing a MediaProjection consent token.
             startForeground(
                 NOTIF_ID,
                 notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
             )
         } else {
             startForeground(NOTIF_ID, notification)

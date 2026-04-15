@@ -37,11 +37,15 @@
         </provider>
 
         <!-- MediaMTX RTMP server runs as a foreground service so it survives
-             app backgrounding. mediaProjection type because it handles live
-             video ingest. -->
+             app backgrounding. connectedDevice type because the service
+             exists to ingest streams from BLE-connected cameras; this is
+             the Android 14+ compliant match and requires BLUETOOTH_CONNECT,
+             which the app already declares. NOT mediaProjection — that
+             type requires a real MediaProjection consent token which is
+             only for screen capture. -->
         <service
             android:name=".MediaMtxService"
-            android:foregroundServiceType="mediaProjection"
+            android:foregroundServiceType="connectedDevice"
             android:exported="false" />
     </application>
 
@@ -66,8 +70,10 @@
 
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
-    <!-- Foreground service for the MediaMTX RTMP receiver. -->
+    <!-- Foreground service for the MediaMTX RTMP receiver.
+         FOREGROUND_SERVICE_CONNECTED_DEVICE is the Android 14+ specific
+         permission that corresponds to the "connectedDevice" FGS type. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>
