@@ -413,6 +413,11 @@ body {
 #paired-list li button:hover { color: var(--accent); border-color: var(--accent); }
 
 /* ========== LOG MODAL ========== */
+/* Belt-and-braces override of the HTML `hidden` attribute — any element
+   with a higher-specificity `display` rule silently wins over the UA's
+   [hidden]{display:none}. This bit us on .log-modal. */
+[hidden] { display: none !important; }
+
 .log-modal {
   position: fixed;
   left: 10px;
