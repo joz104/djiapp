@@ -1,15 +1,83 @@
 :root {
-  --bg: #0b0b0f;
-  --panel: #14141b;
-  --panel-2: #1c1c26;
-  --fg: #f5f5f7;
-  --muted: #8a8a96;
-  --border: #2a2a36;
-  --accent: #ff2a2a;
-  --accent-dim: #7a1414;
-  --ok: #2ecc71;
-  --warn: #ffb020;
+  /* ---- Material 3 color scheme (dark, red primary) ---- */
+  --md-sys-color-primary:              #FFB4AB;
+  --md-sys-color-on-primary:           #690005;
+  --md-sys-color-primary-container:    #93000A;
+  --md-sys-color-on-primary-container: #FFDAD6;
+
+  --md-sys-color-secondary:            #E7BDB8;
+  --md-sys-color-on-secondary:         #442926;
+  --md-sys-color-secondary-container:  #5D3F3B;
+  --md-sys-color-on-secondary-container:#FFDAD6;
+
+  --md-sys-color-tertiary:             #DDC48D;
+  --md-sys-color-on-tertiary:          #3E2E05;
+
+  --md-sys-color-error:                #FFB4AB;
+  --md-sys-color-on-error:              #690005;
+
+  --md-sys-color-surface:                  #141217;
+  --md-sys-color-surface-container-lowest: #0E0C11;
+  --md-sys-color-surface-container-low:    #1C1A1F;
+  --md-sys-color-surface-container:        #201D22;
+  --md-sys-color-surface-container-high:   #2B272C;
+  --md-sys-color-surface-container-highest:#363137;
+
+  --md-sys-color-on-surface:         #EDE0E0;
+  --md-sys-color-on-surface-variant: #D1C3C2;
+  --md-sys-color-outline:            #9A8C8B;
+  --md-sys-color-outline-variant:    #524343;
+
+  --md-sys-color-ok:    #7DD88F;
+  --md-sys-color-warn:  #FFD27A;
+
+  /* ---- Typography (system stack, no vendored font) ---- */
+  --md-font:      system-ui, Roboto, "Segoe UI", -apple-system, sans-serif;
+  --md-font-mono: ui-monospace, "Roboto Mono", "SF Mono", Menlo, monospace;
+  --md-title-large:   500 22px/28px var(--md-font);
+  --md-title-medium:  500 16px/24px var(--md-font);
+  --md-title-small:   500 14px/20px var(--md-font);
+  --md-label-large:   500 14px/20px var(--md-font);
+  --md-label-medium:  500 12px/16px var(--md-font);
+  --md-label-small:   500 11px/16px var(--md-font);
+  --md-body-large:    400 16px/24px var(--md-font);
+  --md-body-medium:   400 14px/20px var(--md-font);
+  --md-body-small:    400 12px/16px var(--md-font);
+
+  /* ---- Spacing + shape ---- */
+  --md-space-1:  4px;
+  --md-space-2:  8px;
+  --md-space-3: 12px;
+  --md-space-4: 16px;
+  --md-space-5: 24px;
+  --md-space-6: 32px;
+
+  --md-shape-none: 0;
+  --md-shape-xs:   4px;
+  --md-shape-sm:   8px;
+  --md-shape-md:  12px;
+  --md-shape-lg:  16px;
+  --md-shape-xl:  28px;
+  --md-shape-full:9999px;
+
+  --md-elev-1: 0 1px 2px rgba(0,0,0,.30), 0 1px 3px 1px rgba(0,0,0,.15);
+  --md-elev-2: 0 1px 2px rgba(0,0,0,.30), 0 2px 6px 2px rgba(0,0,0,.15);
+  --md-elev-3: 0 4px 8px 3px rgba(0,0,0,.15), 0 1px 3px rgba(0,0,0,.30);
+
+  /* ---- Legacy aliases — keep old rules rendering through new tokens ---- */
+  --bg:         var(--md-sys-color-surface);
+  --panel:      var(--md-sys-color-surface-container);
+  --panel-2:    var(--md-sys-color-surface-container-high);
+  --fg:         var(--md-sys-color-on-surface);
+  --muted:      var(--md-sys-color-on-surface-variant);
+  --border:     var(--md-sys-color-outline-variant);
+  --accent:     var(--md-sys-color-primary);
+  --accent-dim: var(--md-sys-color-primary-container);
+  --ok:         var(--md-sys-color-ok);
+  --warn:       var(--md-sys-color-warn);
 }
+
+html, body { font: var(--md-body-medium); letter-spacing: 0.01em; }
 
 * { box-sizing: border-box; }
 
@@ -34,64 +102,103 @@ body {
   overflow: hidden;
 }
 
-/* ========== TOPBAR ========== */
-.topbar {
+/* ========== M3 TOP APP BAR ========== */
+.md-topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 8px 14px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  gap: var(--md-space-2);
+  height: 64px;
+  padding: 0 var(--md-space-4);
+  background: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface);
   flex-shrink: 0;
-  gap: 10px;
+}
+.md-topbar-title {
+  flex: 1;
+  margin: 0;
+  font: var(--md-title-large);
+  color: var(--md-sys-color-on-surface);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.md-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--md-space-1);
 }
 
-.topbar h1 {
-  font-size: 15px;
-  margin: 0;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--fg);
+/* ========== M3 BUTTONS ========== */
+/* Icon button — 48x48 hit target, 24px glyph, pill background on hover/active */
+.md-icon-btn {
+  width: 48px;
+  height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--md-shape-full);
+  color: var(--md-sys-color-on-surface-variant);
+  cursor: pointer;
+  position: relative;
+  transition: background-color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.md-icon-btn:hover  { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); }
+.md-icon-btn:active { background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent); }
+.md-icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.md-icon-btn[aria-pressed="true"] {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+.md-icon { width: 24px; height: 24px; fill: currentColor; display: block; }
+
+/* Filled-tonal button — Material 3 secondary action */
+.md-btn {
+  font: var(--md-label-large);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--md-space-2);
+  height: 40px;
+  padding: 0 var(--md-space-4) 0 var(--md-space-3);
+  border: none;
+  border-radius: var(--md-shape-full);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 0.15s, box-shadow 0.15s;
   white-space: nowrap;
 }
+.md-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.md-btn-tonal {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+.md-btn-tonal:hover  { background: color-mix(in srgb, var(--md-sys-color-on-secondary-container) 8%, var(--md-sys-color-secondary-container)); }
+.md-btn-tonal:active { background: color-mix(in srgb, var(--md-sys-color-on-secondary-container) 12%, var(--md-sys-color-secondary-container)); }
 
-.top-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
+/* When preview is running, the tonal button flips to the red primary
+   container so it's unmistakable at a glance. */
+.btn-preview-active,
+.md-btn-tonal.btn-preview-active {
+  background: var(--md-sys-color-primary-container) !important;
+  color:      var(--md-sys-color-on-primary-container) !important;
 }
 
-/* ========== BUTTONS ========== */
-.btn {
-  font: inherit;
-  color: var(--fg);
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 14px;
-  min-height: 40px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  touch-action: manipulation;
-  transition: background 0.1s, border-color 0.1s, transform 0.05s;
+/* Screen-reader-only helper (for the view-label span inside #btn-view) */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
-.btn:active { transform: scale(0.98); }
-.btn-secondary:hover { border-color: var(--fg); }
-.btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-.btn-close {
-  font: inherit;
-  color: var(--muted);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  width: 36px;
-  height: 36px;
-  font-size: 18px;
-  cursor: pointer;
-}
-.btn-close:hover { color: var(--fg); border-color: var(--fg); }
 
 /* ========== CAMERA GRID ========== */
 .grid {
@@ -204,74 +311,54 @@ body {
 .chip.warn { color: var(--warn);   border-color: var(--warn); }
 .chip.rec  { color: var(--accent); border-color: var(--accent); font-weight: 700; }
 
-/* ========== RECORD BAR ========== */
-.record-bar {
-  flex-shrink: 0;
-  padding: 12px 16px;
-  background: var(--panel);
-  border-top: 1px solid var(--border);
-}
-
-/* Idle state: solid dark-red fill, white text, rounded pill.
-   Active state: brighter red + soft pulse. */
-.btn-record {
-  width: 100%;
-  min-height: 76px;
-  font: inherit;
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #fff;
-  background: #9e1e22;
-  border: none;
-  border-radius: 16px;
-  cursor: pointer;
-  touch-action: manipulation;
+/* ========== M3 EXTENDED FAB (MASTER RECORD) ========== */
+/* Centered red extended FAB docked at the bottom of the screen,
+   floats above the grid. Much smaller than the old full-width pill. */
+.md-fab-dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(24px + env(safe-area-inset-bottom));
   display: flex;
-  align-items: center;
   justify-content: center;
-  gap: 16px;
-  transition: background 0.15s, transform 0.05s;
-  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.25);
+  pointer-events: none;  /* only the button inside catches touches */
+  z-index: 10;
 }
-.btn-record:hover  { background: #b8252a; }
-.btn-record:active { transform: scale(0.995); }
+.md-fab-ext {
+  pointer-events: auto;
+  font: var(--md-label-large);
+  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--md-space-3);
+  height: 56px;
+  min-width: 80px;
+  padding: 0 var(--md-space-5);
+  background: var(--md-sys-color-primary-container);
+  color:      var(--md-sys-color-on-primary-container);
+  border: none;
+  border-radius: var(--md-shape-lg);
+  cursor: pointer;
+  box-shadow: var(--md-elev-3);
+  letter-spacing: 0.02em;
+  transition: background-color 0.15s, transform 0.08s, box-shadow 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.md-fab-ext:hover  { background: color-mix(in srgb, var(--md-sys-color-on-primary-container) 8%, var(--md-sys-color-primary-container)); }
+.md-fab-ext:active { transform: scale(0.98); }
+.md-fab-ext:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.btn-record .dot {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #fff;
-  opacity: 0.92;
-  flex-shrink: 0;
-}
+/* Icon swap on recording state */
+.md-fab-icon-idle { display: block; }
+.md-fab-icon-rec  { display: none; }
+.md-fab-ext[aria-pressed="true"] { animation: md-rec-pulse 1.6s ease-in-out infinite; }
+.md-fab-ext[aria-pressed="true"] .md-fab-icon-idle { display: none; }
+.md-fab-ext[aria-pressed="true"] .md-fab-icon-rec  { display: block; color: var(--md-sys-color-on-primary-container); }
+.md-fab-ext[aria-pressed="true"] .md-fab-icon-rec rect { fill: currentColor; }
 
-.btn-record[aria-pressed="true"] {
-  background: var(--accent);
-  animation: record-pulse 1.6s ease-in-out infinite;
-}
-.btn-record[aria-pressed="true"] .dot {
-  background: #fff;
-  animation: dot-blink 1s ease-in-out infinite;
-}
-
-@keyframes record-pulse {
-  0%, 100% { box-shadow: 0 2px 0 rgba(0, 0, 0, 0.25), 0 0 0 0 rgba(255, 42, 42, 0.55); }
-  50%      { box-shadow: 0 2px 0 rgba(0, 0, 0, 0.25), 0 0 0 10px rgba(255, 42, 42, 0); }
-}
-@keyframes dot-blink {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.35; }
-}
-
-/* Topbar preview button: neutral in idle state, red when streaming, so
-   Start Preview is visually "the thing you can tap without opening
-   Setup" and Stop Preview is unmistakable during a match. */
-.btn-preview-active {
-  color: #fff !important;
-  background: var(--accent) !important;
-  border-color: var(--accent) !important;
+@keyframes md-rec-pulse {
+  0%, 100% { box-shadow: var(--md-elev-3), 0 0 0 0 color-mix(in srgb, var(--md-sys-color-primary) 45%, transparent); }
+  50%      { box-shadow: var(--md-elev-3), 0 0 0 12px color-mix(in srgb, var(--md-sys-color-primary) 0%, transparent); }
 }
 
 /* ========== COLLAPSED LOG BAR ========== */
@@ -572,6 +659,7 @@ body {
     border-top-left-radius: 0;
     border-top-right-radius: 0;
   }
-  .topbar h1 { font-size: 13px; }
-  .btn-record { min-height: 64px; font-size: 18px; }
+  .md-topbar-title { font-size: 18px; }
+  .md-topbar { height: 56px; }
+  .md-fab-ext { height: 52px; padding: 0 var(--md-space-4); font-size: 14px; }
 }

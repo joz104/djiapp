@@ -13,16 +13,24 @@
 </head>
 <body>
 
-  <!-- ========== HEADER ========== -->
-  <header class="topbar">
-    <h1>Field Multi-Cam</h1>
-    <div class="top-actions">
-      <button id="btn-view" class="btn btn-secondary" title="Toggle split / stitched view">
-        <span id="view-label">View: Split</span>
+  <!-- ========== M3 TOP APP BAR ========== -->
+  <header class="md-topbar" role="banner">
+    <h1 class="md-topbar-title">Field Multi-Cam</h1>
+    <div class="md-topbar-actions">
+      <button id="btn-view" class="md-icon-btn" title="Toggle split / stitched view" aria-label="View: split">
+        <svg class="md-icon" viewBox="0 0 24 24"><path d="M3 5h8v14H3zm10 0h8v14h-8z"/></svg>
+        <span id="view-label" class="sr-only">View: Split</span>
       </button>
-      <button id="btn-preview-main" class="btn btn-secondary">Start Preview</button>
-      <button id="btn-scan" class="btn btn-secondary">+ Pair</button>
-      <button id="btn-setup" class="btn btn-secondary">Setup</button>
+      <button id="btn-scan" class="md-icon-btn" title="Pair camera" aria-label="Pair camera">
+        <svg class="md-icon" viewBox="0 0 24 24"><path d="M17.71 7.71 12 2h-1v7.59L6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 11 14.41V22h1l5.71-5.71-4.3-4.29 4.3-4.29zM13 5.83l1.88 1.88L13 9.59V5.83zm1.88 10.46L13 18.17v-3.76l1.88 1.88z"/></svg>
+      </button>
+      <button id="btn-preview-main" class="md-btn md-btn-tonal">
+        <svg class="md-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        <span id="btn-preview-main-label">Start Preview</span>
+      </button>
+      <button id="btn-setup" class="md-icon-btn" title="More options" aria-label="More options">
+        <svg class="md-icon" viewBox="0 0 24 24"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
+      </button>
     </div>
   </header>
 
@@ -49,13 +57,14 @@
     <canvas id="stitch-canvas" class="stitch-canvas"></canvas>
   </main>
 
-  <!-- ========== MASTER RECORD BAR ========== -->
-  <footer class="record-bar">
-    <button id="btn-master" class="btn-record" aria-pressed="false">
-      <span class="dot"></span>
+  <!-- ========== M3 EXTENDED FAB (MASTER RECORD) ========== -->
+  <div class="md-fab-dock">
+    <button id="btn-master" class="md-fab-ext" aria-pressed="false" aria-label="Master record">
+      <svg class="md-icon md-fab-icon-idle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>
+      <svg class="md-icon md-fab-icon-rec"  viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
       <span id="master-label">MASTER RECORD</span>
     </button>
-  </footer>
+  </div>
 
   <!-- ========== COLLAPSED LOG BAR ========== -->
   <div id="log-bar" class="log-bar" role="button" tabindex="0">
@@ -117,7 +126,10 @@
       </div>
 
       <div class="preview-row">
-        <button id="btn-preview" class="btn btn-secondary">Start Preview</button>
+        <button id="btn-preview" class="md-btn md-btn-tonal">
+          <svg class="md-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          <span id="btn-preview-label">Start Preview</span>
+        </button>
         <span id="preview-status" class="chip">idle</span>
       </div>
     </section>

@@ -340,7 +340,9 @@ const mediaMtxPlugin = () =>
   (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MediaMtx) || null;
 
 const previewBtn = document.getElementById('btn-preview');
+const previewBtnLabel = document.getElementById('btn-preview-label');
 const previewBtnMain = document.getElementById('btn-preview-main');
+const previewBtnMainLabel = document.getElementById('btn-preview-main-label');
 const previewStatus = document.getElementById('preview-status');
 const previewHint = document.getElementById('preview-hint');
 const previewSsid = document.getElementById('preview-ssid');
@@ -400,18 +402,16 @@ const MID_FLIGHT_LABELS = new Set([
 function setPreviewUi(running, label) {
   previewRunning = running;
   const baseTxt = running ? 'Stop Preview' : 'Start Preview';
-  // Drawer button: just the base text. The small status chip next to
-  // it shows the detailed label.
-  previewBtn.textContent = baseTxt;
-  // Topbar button: show the mid-flight label inline so the user can
-  // see progress without opening the drawer. On final states (idle /
-  // streaming) it reverts to the base text.
+  // Both buttons now contain an SVG icon alongside the text, so we must
+  // write to the inner <span id="*-label"> to avoid wiping the icon.
+  previewBtnLabel.textContent = baseTxt;
   if (label && MID_FLIGHT_LABELS.has(label)) {
-    previewBtnMain.textContent = label;
+    previewBtnMainLabel.textContent = label;
   } else {
-    previewBtnMain.textContent = baseTxt;
+    previewBtnMainLabel.textContent = baseTxt;
   }
   previewBtnMain.classList.toggle('btn-preview-active', running);
+  previewBtn.classList.toggle('btn-preview-active', running);
   previewStatus.textContent = label || (running ? 'streaming' : 'idle');
   previewStatus.className = 'chip ' + (running ? 'ok' : '');
 }
