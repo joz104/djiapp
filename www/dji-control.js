@@ -316,17 +316,18 @@ const dji55Driver = {
     };
   },
 
-  // Sent before recordFrame('start') so the camera flips into RECORD
-  // work mode (0x01). No-op if the camera is already in RECORD mode.
-  // Prevents the 'user had camera in Photo mode, Master Record didn't
-  // trigger video' failure path.
+  // Sent before recordFrame('start') as a best-effort attempt to flip
+  // the camera into RECORD work mode. WARNING: empirically the camera
+  // doesn't respond to this frame on Action 3 firmware — it times out
+  // after the brief timeout below. We still fire it in case some
+  // firmwares do support it. Kept short so the record flow stays snappy.
   setWorkModeRecordFrame() {
     return {
       target: WORK_MODE_TARGET,
       txId: nextRecTxId(),
       type: WORK_MODE_TYPE,
       payload: WORK_MODE_RECORD_PAYLOAD,
-      timeoutMs: 3000,
+      timeoutMs: 1200,
     };
   },
 
@@ -547,7 +548,17 @@ export class DJIControl extends EventTarget {
         const resp = await s.sendAndAwait(s.driver.recordFrame(action));
         if (!s.driver.isRecordOk(resp)) {
           const status = resp.payload[0];
-          throw new Error(`camera returned error 0x${status?.toString(16)}`);
+          // Known error codes from empirical Action 3 testing:
+          //   0x00 = success
+          //   0xdf = camera rejected (typically Photo mode — user
+          //          must manually switch the camera body to Video)
+          //   0xe0 = wrong target
+          //   0xe3 = bad argument
+          let hint = '';
+          if (status === 0xdf) {
+            hint = ' — camera may be in Photo mode. Switch to Video mode on the camera body (swipe or mode button) and try again.';
+          }
+          throw new Error(`camera returned error 0x${status?.toString(16)}${hint}`);
         }
         s.recording = (action === 'start');
         this._emitStatus(s);
