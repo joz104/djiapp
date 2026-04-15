@@ -267,6 +267,18 @@ body {
   display: block;
 }
 
+/* Android WebView renders a giant default play-button overlay on any
+   <video> without a src. Nuke every media-control pseudo so our panes
+   stay black until hls.js puts real frames in. */
+video::-webkit-media-controls,
+video::-webkit-media-controls-enclosure,
+video::-webkit-media-controls-panel,
+video::-webkit-media-controls-overlay-play-button,
+video::-webkit-media-controls-start-playback-button {
+  display: none !important;
+  -webkit-appearance: none !important;
+}
+
 .grid[data-view="stitched"] .cam .video {
   object-fit: cover; /* fill the half so the seam is continuous */
 }
@@ -318,7 +330,8 @@ body {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: calc(24px + env(safe-area-inset-bottom));
+  /* Clear the collapsed log bar (~28px) + safe area + breathing room. */
+  bottom: calc(72px + env(safe-area-inset-bottom));
   display: flex;
   justify-content: center;
   pointer-events: none;  /* only the button inside catches touches */
@@ -416,19 +429,26 @@ body {
 }
 .setup-drawer.open { transform: translateX(0); }
 
+/* Drawer header: close button on the LEFT like a native Material 3 app
+   bar, title next to it. Close button is a 48×48 .md-icon-btn so it has
+   an M3-compliant hit target (the old 36px × character was too small
+   and in an awkward corner). */
 .drawer-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 14px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--border);
+  gap: var(--md-space-2);
+  margin: calc(-1 * var(--md-space-4)) calc(-1 * var(--md-space-5)) var(--md-space-4);
+  padding: var(--md-space-2) var(--md-space-3) var(--md-space-2) var(--md-space-2);
+  background: var(--md-sys-color-surface-container-low);
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  min-height: 64px;
 }
 .drawer-header h2 {
   margin: 0;
-  font-size: 16px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  font: var(--md-title-large);
+  color: var(--md-sys-color-on-surface);
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 /* Preview control (inside drawer) */
@@ -659,7 +679,32 @@ body {
     border-top-left-radius: 0;
     border-top-right-radius: 0;
   }
-  .md-topbar-title { font-size: 18px; }
-  .md-topbar { height: 56px; }
+  .md-topbar-title { font-size: 16px; font-weight: 500; }
+  .md-topbar { height: 56px; gap: 0; padding: 0 var(--md-space-2); }
+  .md-topbar-actions { gap: 0; }
   .md-fab-ext { height: 52px; padding: 0 var(--md-space-4); font-size: 14px; }
+
+  /* Portrait/narrow: hide the Preview button's text so it collapses to
+     an icon-only circle and stops pushing the title off-screen. The
+     inner span is still present for screen readers. */
+  #btn-preview-main {
+    width: 48px;
+    padding: 0;
+    justify-content: center;
+    border-radius: var(--md-shape-full);
+  }
+  #btn-preview-main-label { display: none; }
+}
+
+/* Narrow width (< 600px logical) — kicks in even if device is nominally
+   landscape but the viewport is small. Same shrink rules. */
+@media (max-width: 600px) {
+  .md-topbar-title { font-size: 16px; font-weight: 500; }
+  #btn-preview-main {
+    width: 48px;
+    padding: 0;
+    justify-content: center;
+    border-radius: var(--md-shape-full);
+  }
+  #btn-preview-main-label { display: none; }
 }
