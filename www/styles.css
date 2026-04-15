@@ -207,51 +207,71 @@ body {
 /* ========== RECORD BAR ========== */
 .record-bar {
   flex-shrink: 0;
-  padding: 10px 14px;
+  padding: 12px 16px;
   background: var(--panel);
   border-top: 1px solid var(--border);
 }
 
+/* Idle state: solid dark-red fill, white text, rounded pill.
+   Active state: brighter red + soft pulse. */
 .btn-record {
   width: 100%;
-  min-height: 72px;
+  min-height: 76px;
   font: inherit;
-  font-size: 20px;
-  font-weight: 800;
-  letter-spacing: 0.1em;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--accent);
-  background: transparent;
-  border: 3px solid var(--accent);
-  border-radius: 14px;
+  color: #fff;
+  background: #9e1e22;
+  border: none;
+  border-radius: 16px;
   cursor: pointer;
   touch-action: manipulation;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: 16px;
   transition: background 0.15s, transform 0.05s;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.25);
 }
-.btn-record:active { transform: scale(0.99); }
+.btn-record:hover  { background: #b8252a; }
+.btn-record:active { transform: scale(0.995); }
 
 .btn-record .dot {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  background: var(--accent);
+  background: #fff;
+  opacity: 0.92;
+  flex-shrink: 0;
 }
 
 .btn-record[aria-pressed="true"] {
   background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
-  animation: pulse 1.2s infinite;
+  animation: record-pulse 1.6s ease-in-out infinite;
 }
-.btn-record[aria-pressed="true"] .dot { background: #fff; }
+.btn-record[aria-pressed="true"] .dot {
+  background: #fff;
+  animation: dot-blink 1s ease-in-out infinite;
+}
 
-@keyframes pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 42, 42, 0.6); }
-  50%      { box-shadow: 0 0 0 12px rgba(255, 42, 42, 0); }
+@keyframes record-pulse {
+  0%, 100% { box-shadow: 0 2px 0 rgba(0, 0, 0, 0.25), 0 0 0 0 rgba(255, 42, 42, 0.55); }
+  50%      { box-shadow: 0 2px 0 rgba(0, 0, 0, 0.25), 0 0 0 10px rgba(255, 42, 42, 0); }
+}
+@keyframes dot-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
+/* Topbar preview button: neutral in idle state, red when streaming, so
+   Start Preview is visually "the thing you can tap without opening
+   Setup" and Stop Preview is unmistakable during a match. */
+.btn-preview-active {
+  color: #fff !important;
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
 }
 
 /* ========== COLLAPSED LOG BAR ========== */

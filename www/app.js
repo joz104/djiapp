@@ -340,6 +340,7 @@ const mediaMtxPlugin = () =>
   (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MediaMtx) || null;
 
 const previewBtn = document.getElementById('btn-preview');
+const previewBtnMain = document.getElementById('btn-preview-main');
 const previewStatus = document.getElementById('preview-status');
 const previewHint = document.getElementById('preview-hint');
 const previewSsid = document.getElementById('preview-ssid');
@@ -374,7 +375,12 @@ let previewRunning = false;
 
 function setPreviewUi(running, label) {
   previewRunning = running;
-  previewBtn.textContent = running ? 'Stop Preview' : 'Start Preview';
+  const txt = running ? 'Stop Preview' : 'Start Preview';
+  previewBtn.textContent = txt;
+  previewBtnMain.textContent = txt;
+  // When the main-bar button is in the "stop" state we want it to look
+  // distinct from the other topbar buttons so it's easy to find.
+  previewBtnMain.classList.toggle('btn-preview-active', running);
   previewStatus.textContent = label || (running ? 'streaming' : 'idle');
   previewStatus.className = 'chip ' + (running ? 'ok' : '');
 }
@@ -396,6 +402,7 @@ async function pickTabletIp() {
 if (!mediaMtxPlugin()) {
   previewHint.textContent = 'Live preview requires the Android APK build (MediaMtx plugin is not available in a regular browser).';
   previewBtn.disabled = true;
+  previewBtnMain.disabled = true;
   previewSsid.disabled = true;
   previewPass.disabled = true;
   previewRes.disabled = true;
@@ -403,26 +410,35 @@ if (!mediaMtxPlugin()) {
   previewBr.disabled = true;
 }
 
-previewBtn.addEventListener('click', async () => {
+function setPreviewBusy(busy) {
+  previewBtn.disabled = busy;
+  previewBtnMain.disabled = busy;
+}
+
+async function onPreviewClick() {
   const mmtx = mediaMtxPlugin();
   if (!mmtx) return;
 
   if (!previewRunning) {
     const ssid = previewSsid.value.trim();
     const pass = previewPass.value;
-    if (!ssid) { log('err', 'Enter your hotspot SSID first.'); return; }
+    if (!ssid) {
+      log('err', 'Enter your hotspot SSID in Setup first.');
+      openSetup();
+      return;
+    }
     if (dji.pairedCameras.size === 0) { log('err', 'Pair at least one camera first.'); return; }
 
     localStorage.setItem(PREVIEW_SSID_KEY, ssid);
     localStorage.setItem(PREVIEW_PASS_KEY, pass);
 
-    previewBtn.disabled = true;
+    setPreviewBusy(true);
     setPreviewUi(false, 'starting server…');
     try {
       await mmtx.start();
     } catch (e) {
       log('err', `MediaMTX start failed: ${e.message}`);
-      previewBtn.disabled = false;
+      setPreviewBusy(false);
       setPreviewUi(false, 'idle');
       return;
     }
@@ -431,7 +447,7 @@ previewBtn.addEventListener('click', async () => {
     const ipInfo = await pickTabletIp();
     if (!ipInfo) {
       log('err', 'Could not determine tablet IP. Is the hotspot enabled?');
-      previewBtn.disabled = false;
+      setPreviewBusy(false);
       setPreviewUi(false, 'idle');
       return;
     }
@@ -449,7 +465,7 @@ previewBtn.addEventListener('click', async () => {
     } catch (e) {
       log('err', `Preview setup failed: ${e.message}`);
       try { await mmtx.stop(); } catch {}
-      previewBtn.disabled = false;
+      setPreviewBusy(false);
       setPreviewUi(false, 'idle');
       return;
     }
@@ -458,13 +474,11 @@ previewBtn.addEventListener('click', async () => {
     if (okCount === 0) {
       log('err', 'All cameras failed to start streaming. Stopping server.');
       try { await mmtx.stop(); } catch {}
-      previewBtn.disabled = false;
+      setPreviewBusy(false);
       setPreviewUi(false, 'idle');
       return;
     }
 
-    // Point the video panes at the HLS endpoints. hls.js will retry until
-    // the camera actually starts publishing.
     results.forEach((r, i) => {
       if (!r.ok) return;
       const hlsUrl = `http://localhost:8888/cam${i + 1}/index.m3u8`;
@@ -472,12 +486,12 @@ previewBtn.addEventListener('click', async () => {
       if (pane) pane.load(hlsUrl);
     });
 
-    previewBtn.disabled = false;
+    setPreviewBusy(false);
     setPreviewUi(true, `streaming (${okCount}/${results.length})`);
     log('ok', `Preview running. ${okCount}/${results.length} cameras streaming.`);
 
   } else {
-    previewBtn.disabled = true;
+    setPreviewBusy(true);
     setPreviewUi(true, 'stopping cameras…');
     try {
       const results = await dji.stopPreviewAll();
@@ -489,11 +503,14 @@ previewBtn.addEventListener('click', async () => {
     try { await mmtx.stop(); } catch (e) { log('warn', `MediaMTX stop error: ${e.message}`); }
     pane1.load('');
     pane2.load('');
-    previewBtn.disabled = false;
+    setPreviewBusy(false);
     setPreviewUi(false, 'idle');
     log('ok', 'Preview stopped. Cameras idle.');
   }
-});
+}
+
+previewBtn.addEventListener('click', onPreviewClick);
+previewBtnMain.addEventListener('click', onPreviewClick);
 
 // ---- Setup drawer (right-side slide-in) ---------------------------------
 const setupDrawer = document.getElementById('setup-drawer');
