@@ -10,10 +10,18 @@ function log(kind, msg) {
   const line = document.createElement('div');
   line.className = kind;
   const ts = new Date().toLocaleTimeString();
-  line.textContent = `[${ts}] ${msg}`;
+  const full = `[${ts}] ${msg}`;
+  line.textContent = full;
   logEl.appendChild(line);
   while (logEl.childNodes.length > 200) logEl.removeChild(logEl.firstChild);
   logEl.scrollTop = logEl.scrollHeight;
+  // Mirror to console so Capacitor routes it into Android Logcat under
+  // tag 'Capacitor/Console'. Lets us grep `adb logcat` directly instead
+  // of hand-copying from the UI panel.
+  const tag = `[FMC:${kind}]`;
+  if (kind === 'err') console.error(tag, msg);
+  else if (kind === 'warn') console.warn(tag, msg);
+  else console.log(tag, msg);
 }
 
 const dji = new DJIControl();

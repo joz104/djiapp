@@ -305,6 +305,32 @@ const dji55Driver = {
     };
   },
 
+  // node-osmo's cleanup send: same frame shape as stopStreaming, sent
+  // BEFORE setupWifi to flush any prior stream state. The camera responds
+  // with the same txId even if there was nothing to stop.
+  cleanupStreamFrame() {
+    return {
+      target: STOP_STREAM_TARGET,
+      txId: STOP_STREAM_TXID,
+      type: STOP_STREAM_TYPE,
+      payload: STOP_STREAM_PAYLOAD,
+      timeoutMs: 5000,
+    };
+  },
+
+  // Empty-payload message that transitions the camera from "cleaning up"
+  // to "ready to receive wifi credentials". Must be sent between
+  // stopStreaming and setupWifi or setupWifi times out.
+  prepareStreamFrame() {
+    return {
+      target: PREP_STREAM_TARGET,
+      txId: PREP_STREAM_TXID,
+      type: PREP_STREAM_TYPE,
+      payload: new Uint8Array(0),
+      timeoutMs: 5000,
+    };
+  },
+
   setupWifiFrame(ssid, password) {
     return {
       target: SETUP_WIFI_TARGET,
@@ -494,9 +520,18 @@ export class DJIControl extends EventTarget {
   async startPreviewAll({ ssid, password, baseRtmpUrl, resolution, fps, bitrateKbps }) {
     const sessions = Array.from(this.pairedCameras.values()).filter(s => s.connected);
     if (sessions.length === 0) throw new Error('No connected cameras');
+    // Per node-osmo's osmoAction3 state machine, we must walk the full
+    // cleanup → prepare → wifi → start sequence. Each step awaits its
+    // response before the next. Skipping stopStream or prepareStream
+    // causes setupWifi to silently time out (camera ignores it if it's
+    // not in the right state).
     return Promise.all(sessions.map(async (s, i) => {
       const rtmpUrl = `${baseRtmpUrl}/cam${i + 1}`;
       try {
+        this.log('ok', `${s.label()} → stopStreaming (cleanup)`);
+        await s.sendAndAwait(s.driver.cleanupStreamFrame());
+        this.log('ok', `${s.label()} → preparingToLivestream`);
+        await s.sendAndAwait(s.driver.prepareStreamFrame());
         this.log('ok', `${s.label()} → setupWifi "${ssid}"`);
         await s.sendAndAwait(s.driver.setupWifiFrame(ssid, password));
         this.log('ok', `${s.label()} → startStreaming ${rtmpUrl}`);

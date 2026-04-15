@@ -1,4 +1,4 @@
-const CACHE = 'field-cam-v17';
+const CACHE = 'field-cam-v18';
 const SHELL = [
   './',
   './index.html',
