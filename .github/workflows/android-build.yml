@@ -92,7 +92,6 @@ jobs:
 
             Not signed. Debug key only — do not publish to a store.
           files: |
-            field-multicam-latest.apk
             field-multicam-*.apk
           prerelease: true
           draft: false
