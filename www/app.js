@@ -172,23 +172,43 @@ document.querySelectorAll('[data-rec-test]').forEach((btn) => {
   });
 });
 
-// ---- Live preview (on-device RTMP via Capacitor MediaMtx plugin) --------
+// ---- Live preview (end-to-end on-device) --------------------------------
+// Workflow:
+//  1. User enables the tablet's hotspot (manual OS action).
+//  2. User enters SSID + password in the app (persisted in localStorage).
+//  3. User taps Start Preview:
+//     a. MediaMtx Capacitor plugin starts MediaMTX on :1935 (RTMP in) and
+//        :8888 (LL-HLS out).
+//     b. We fetch the tablet's local IPs and pick the 192.168.x.x one.
+//     c. For each connected camera we send setupWifi(ssid, password) then
+//        startStreaming(rtmp://<tablet>:1935/camN) over BLE.
+//     d. Video panes auto-load the HLS URLs; hls.js retries until the
+//        cameras actually start publishing.
+//  4. User taps Stop Preview: stopStreaming over BLE to each camera, then
+//     MediaMtx.stop(). Cameras drop back to idle and are ready for record.
 const mediaMtxPlugin = () =>
   (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MediaMtx) || null;
 
 const previewBtn = document.getElementById('btn-preview');
 const previewStatus = document.getElementById('preview-status');
-const previewUrlsEl = document.getElementById('preview-urls');
 const previewHint = document.getElementById('preview-hint');
+const previewSsid = document.getElementById('preview-ssid');
+const previewPass = document.getElementById('preview-pass');
+
+const PREVIEW_SSID_KEY = 'fmc-preview-ssid';
+const PREVIEW_PASS_KEY = 'fmc-preview-pass';
+previewSsid.value = localStorage.getItem(PREVIEW_SSID_KEY) || '';
+previewPass.value = localStorage.getItem(PREVIEW_PASS_KEY) || '';
+previewSsid.addEventListener('change', () => localStorage.setItem(PREVIEW_SSID_KEY, previewSsid.value));
+previewPass.addEventListener('change', () => localStorage.setItem(PREVIEW_PASS_KEY, previewPass.value));
 
 let previewRunning = false;
 
-function setPreviewUi(running) {
+function setPreviewUi(running, label) {
   previewRunning = running;
-  previewBtn.textContent = running ? 'Stop RTMP Server' : 'Start RTMP Server';
-  previewStatus.textContent = running ? 'running' : 'idle';
+  previewBtn.textContent = running ? 'Stop Preview' : 'Start Preview';
+  previewStatus.textContent = label || (running ? 'streaming' : 'idle');
   previewStatus.className = 'chip ' + (running ? 'ok' : '');
-  previewUrlsEl.hidden = !running;
 }
 
 async function pickTabletIp() {
@@ -197,7 +217,6 @@ async function pickTabletIp() {
   try {
     const { addresses } = await mmtx.getLocalIps();
     if (!addresses || !addresses.length) return null;
-    // Prefer 192.168.x.x (typical hotspot range) over other interfaces.
     const lan = addresses.find((a) => /^192\.168\./.test(a.ip));
     return lan || addresses[0];
   } catch (e) {
@@ -206,44 +225,100 @@ async function pickTabletIp() {
   }
 }
 
-function updatePreviewUrls(ip) {
-  document.getElementById('url-rtmp1').textContent = `rtmp://${ip}:1935/cam1`;
-  document.getElementById('url-rtmp2').textContent = `rtmp://${ip}:1935/cam2`;
-  document.getElementById('url-hls1').textContent = `http://localhost:8888/cam1/index.m3u8`;
-  document.getElementById('url-hls2').textContent = `http://localhost:8888/cam2/index.m3u8`;
-}
-
 if (!mediaMtxPlugin()) {
-  previewHint.textContent = 'Live preview requires the Android APK build (MediaMtx plugin not available in browser).';
+  previewHint.textContent = 'Live preview requires the Android APK build (MediaMtx plugin is not available in a regular browser).';
   previewBtn.disabled = true;
+  previewSsid.disabled = true;
+  previewPass.disabled = true;
 }
 
 previewBtn.addEventListener('click', async () => {
   const mmtx = mediaMtxPlugin();
   if (!mmtx) return;
-  try {
-    if (!previewRunning) {
+
+  if (!previewRunning) {
+    const ssid = previewSsid.value.trim();
+    const pass = previewPass.value;
+    if (!ssid) { log('err', 'Enter your hotspot SSID first.'); return; }
+    if (dji.pairedCameras.size === 0) { log('err', 'Pair at least one camera first.'); return; }
+
+    localStorage.setItem(PREVIEW_SSID_KEY, ssid);
+    localStorage.setItem(PREVIEW_PASS_KEY, pass);
+
+    previewBtn.disabled = true;
+    setPreviewUi(false, 'starting server…');
+    try {
       await mmtx.start();
-      setPreviewUi(true);
-      const ipInfo = await pickTabletIp();
-      const ip = ipInfo ? ipInfo.ip : '<tablet-ip>';
-      updatePreviewUrls(ip);
-      log('ok', `MediaMTX started. Push RTMP to rtmp://${ip}:1935/cam1 and /cam2`);
-      // Auto-load the HLS URLs into the video panes. hls.js will handle retries
-      // while waiting for the cameras to actually start publishing.
-      const hls1 = `http://localhost:8888/cam1/index.m3u8`;
-      const hls2 = `http://localhost:8888/cam2/index.m3u8`;
-      document.getElementById('url1').value = hls1;
-      document.getElementById('url2').value = hls2;
-      pane1.load(hls1);
-      pane2.load(hls2);
-    } else {
-      await mmtx.stop();
-      setPreviewUi(false);
-      log('ok', 'MediaMTX stopped.');
+    } catch (e) {
+      log('err', `MediaMTX start failed: ${e.message}`);
+      previewBtn.disabled = false;
+      setPreviewUi(false, 'idle');
+      return;
     }
-  } catch (e) {
-    log('err', `Preview toggle failed: ${e.message}`);
+
+    setPreviewUi(false, 'finding tablet IP…');
+    const ipInfo = await pickTabletIp();
+    if (!ipInfo) {
+      log('err', 'Could not determine tablet IP. Is the hotspot enabled?');
+      previewBtn.disabled = false;
+      setPreviewUi(false, 'idle');
+      return;
+    }
+    const baseRtmpUrl = `rtmp://${ipInfo.ip}:1935`;
+    log('ok', `MediaMTX running on ${ipInfo.iface} ${ipInfo.ip}. Pushing cameras to ${baseRtmpUrl}/camN…`);
+
+    setPreviewUi(false, 'configuring cameras…');
+    let results;
+    try {
+      results = await dji.startPreviewAll({ ssid, password: pass, baseRtmpUrl });
+    } catch (e) {
+      log('err', `Preview setup failed: ${e.message}`);
+      try { await mmtx.stop(); } catch {}
+      previewBtn.disabled = false;
+      setPreviewUi(false, 'idle');
+      return;
+    }
+
+    const okCount = results.filter(r => r.ok).length;
+    if (okCount === 0) {
+      log('err', 'All cameras failed to start streaming. Stopping server.');
+      try { await mmtx.stop(); } catch {}
+      previewBtn.disabled = false;
+      setPreviewUi(false, 'idle');
+      return;
+    }
+
+    // Point the video panes at the HLS endpoints. hls.js will retry until
+    // the camera actually starts publishing.
+    results.forEach((r, i) => {
+      if (!r.ok) return;
+      const hlsUrl = `http://localhost:8888/cam${i + 1}/index.m3u8`;
+      const urlInput = document.getElementById(`url${i + 1}`);
+      if (urlInput) urlInput.value = hlsUrl;
+      const pane = i === 0 ? pane1 : pane2;
+      if (pane) pane.load(hlsUrl);
+    });
+
+    previewBtn.disabled = false;
+    setPreviewUi(true, `streaming (${okCount}/${results.length})`);
+    log('ok', `Preview running. ${okCount}/${results.length} cameras streaming.`);
+
+  } else {
+    previewBtn.disabled = true;
+    setPreviewUi(true, 'stopping cameras…');
+    try {
+      const results = await dji.stopPreviewAll();
+      const okCount = results.filter(r => r.ok).length;
+      log('ok', `Preview stop fan-out: ${okCount}/${results.length}`);
+    } catch (e) {
+      log('warn', `stopPreviewAll error: ${e.message}`);
+    }
+    try { await mmtx.stop(); } catch (e) { log('warn', `MediaMTX stop error: ${e.message}`); }
+    pane1.load('');
+    pane2.load('');
+    previewBtn.disabled = false;
+    setPreviewUi(false, 'idle');
+    log('ok', 'Preview stopped. Cameras idle.');
   }
 });
 

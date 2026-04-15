@@ -136,6 +136,73 @@ const PREP_STREAM_TARGET = 0x0802;
 const PREP_STREAM_TXID   = 0x8C12;
 const PREP_STREAM_TYPE   = 0xE10240;
 
+// ---- Live-preview RTMP opcodes (node-osmo reference) -------------------
+// Verified against datagutt/node-osmo src/device.ts for the Osmo Action 3
+// flow. Action 3 skips the configure step that the Action 4/5 pipeline
+// uses; we only need setupWifi → startStreaming → stopStreaming.
+const SETUP_WIFI_TARGET = 0x0702;
+const SETUP_WIFI_TXID   = 0x8C19;
+const SETUP_WIFI_TYPE   = 0x470740;
+
+const START_STREAM_TARGET = 0x0802;
+const START_STREAM_TXID   = 0x8C2C;
+const START_STREAM_TYPE   = 0x780840;
+
+// stopStreaming reuses the same opcode triple as STOP_STREAM_* above.
+// node-osmo's DjiStopStreamingMessagePayload is a fixed 6-byte blob.
+const STOP_STREAM_PAYLOAD = new Uint8Array([0x01, 0x01, 0x1a, 0x00, 0x01, 0x02]);
+
+// Resolution / fps encodings per node-osmo message.ts
+const RESOLUTION_BYTE = { r480p: 0x47, r720p: 0x04, r1080p: 0x0a };
+const FPS_BYTE_25 = 2;
+const FPS_BYTE_30 = 3;
+
+function buildSetupWifiPayload(ssid, password) {
+  const ssidBytes = new TextEncoder().encode(ssid || '');
+  const pwdBytes  = new TextEncoder().encode(password || '');
+  if (ssidBytes.length > 255 || pwdBytes.length > 255) {
+    throw new Error('SSID or password exceeds 255 bytes (djiPackString limit)');
+  }
+  const out = new Uint8Array(1 + ssidBytes.length + 1 + pwdBytes.length);
+  out[0] = ssidBytes.length;
+  out.set(ssidBytes, 1);
+  out[1 + ssidBytes.length] = pwdBytes.length;
+  out.set(pwdBytes, 2 + ssidBytes.length);
+  return out;
+}
+
+function buildStartStreamPayload({ rtmpUrl, resolution = 'r720p', fps = 30, bitrateKbps = 2500 }) {
+  const urlBytes = new TextEncoder().encode(rtmpUrl);
+  const resByte = RESOLUTION_BYTE[resolution] || RESOLUTION_BYTE.r720p;
+  const fpsByte = fps === 25 ? FPS_BYTE_25 : fps === 30 ? FPS_BYTE_30 : 0;
+
+  // Layout (Action 3 / oa5=false):
+  //   [0x00]                          payload1
+  //   [0x2e]                          byte1 (0x2a if oa5)
+  //   [0x00]                          payload2
+  //   [resolutionByte]
+  //   [bitrate LE, 2 bytes]
+  //   [0x02, 0x00]                    payload3
+  //   [fpsByte]
+  //   [0x00, 0x00, 0x00]              payload4
+  //   [url_len_lo, 0x00, ...url_utf8] djiPackUrl (2-byte length prefix)
+  const head = [
+    0x00,
+    0x2e,
+    0x00,
+    resByte,
+    bitrateKbps & 0xff, (bitrateKbps >> 8) & 0xff,
+    0x02, 0x00,
+    fpsByte,
+    0x00, 0x00, 0x00,
+    urlBytes.length & 0xff, (urlBytes.length >> 8) & 0xff,
+  ];
+  const out = new Uint8Array(head.length + urlBytes.length);
+  out.set(head, 0);
+  out.set(urlBytes, head.length);
+  return out;
+}
+
 // ---- Record opcodes (confirmed on Osmo Action 3) -----------------------
 // Empirically validated 2026-04-14 against a real Action 3:
 //   target 0x0102, type 0x020240 (CmdSet=0x02/CmdID=0x02 "Do Record"),
@@ -238,6 +305,36 @@ const dji55Driver = {
     };
   },
 
+  setupWifiFrame(ssid, password) {
+    return {
+      target: SETUP_WIFI_TARGET,
+      txId: SETUP_WIFI_TXID,
+      type: SETUP_WIFI_TYPE,
+      payload: buildSetupWifiPayload(ssid, password),
+      timeoutMs: 15000,
+    };
+  },
+
+  startStreamFrame(opts) {
+    return {
+      target: START_STREAM_TARGET,
+      txId: START_STREAM_TXID,
+      type: START_STREAM_TYPE,
+      payload: buildStartStreamPayload(opts),
+      timeoutMs: 15000,
+    };
+  },
+
+  stopStreamFrame() {
+    return {
+      target: STOP_STREAM_TARGET,
+      txId: STOP_STREAM_TXID,
+      type: STOP_STREAM_TYPE,
+      payload: STOP_STREAM_PAYLOAD,
+      timeoutMs: 5000,
+    };
+  },
+
   decodePush(f) {
     if (f.target === STATUS_PUSH_TARGET && f.type === STATUS_PUSH_TYPE) {
       return parseStatusPush(f.payload);
@@ -268,6 +365,9 @@ const dji0xaaDriver = {
   parseFrame: NOT_IMPL,
   pairFrame: NOT_IMPL,
   recordFrame: NOT_IMPL,
+  setupWifiFrame: NOT_IMPL,
+  startStreamFrame: NOT_IMPL,
+  stopStreamFrame: NOT_IMPL,
   decodePush() { return null; },
   isRecordOk() { return false; },
 };
@@ -387,6 +487,46 @@ export class DJIControl extends EventTarget {
     }));
   }
 
+  // ---- Live preview (RTMP) fan-out ------------------------------------
+  // For each connected camera, send setupWifi then startStreaming. The
+  // cameras are given distinct RTMP paths (cam1, cam2, ...) under a
+  // common baseUrl so our on-device MediaMTX can distinguish them.
+  async startPreviewAll({ ssid, password, baseRtmpUrl, resolution, fps, bitrateKbps }) {
+    const sessions = Array.from(this.pairedCameras.values()).filter(s => s.connected);
+    if (sessions.length === 0) throw new Error('No connected cameras');
+    return Promise.all(sessions.map(async (s, i) => {
+      const rtmpUrl = `${baseRtmpUrl}/cam${i + 1}`;
+      try {
+        this.log('ok', `${s.label()} → setupWifi "${ssid}"`);
+        await s.sendAndAwait(s.driver.setupWifiFrame(ssid, password));
+        this.log('ok', `${s.label()} → startStreaming ${rtmpUrl}`);
+        await s.sendAndAwait(s.driver.startStreamFrame({ rtmpUrl, resolution, fps, bitrateKbps }));
+        s.streaming = true;
+        s.streamUrl = rtmpUrl;
+        this._emitStatus(s);
+        return { ok: true, session: s, rtmpUrl };
+      } catch (e) {
+        this.log('err', `${s.label()} preview failed: ${e.message}`);
+        return { ok: false, session: s, err: e };
+      }
+    }));
+  }
+
+  async stopPreviewAll() {
+    const sessions = Array.from(this.pairedCameras.values()).filter(s => s.connected);
+    return Promise.all(sessions.map(async (s) => {
+      try {
+        await s.sendAndAwait(s.driver.stopStreamFrame());
+        s.streaming = false;
+        s.streamUrl = null;
+        this._emitStatus(s);
+        return { ok: true, session: s };
+      } catch (e) {
+        return { ok: false, session: s, err: e };
+      }
+    }));
+  }
+
   // Manual opcode probe — used for Action 4 testing when it arrives.
   async testRecordFrame({ target = RECORD_TARGET, type = RECORD_TYPE, payload = new Uint8Array(0), label = 'test' } = {}) {
     const sessions = Array.from(this.pairedCameras.values()).filter(s => s.connected);
@@ -424,6 +564,8 @@ class CameraSession {
     this.transport = transport;
     this.connected = false;
     this.recording = false;
+    this.streaming = false;
+    this.streamUrl = null;
     this.battery = null;
     this.rxBuffer = new Uint8Array(0);
     this.pendingByTxId = new Map(); // txId -> { resolve, reject, timer }

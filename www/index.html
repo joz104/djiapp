@@ -64,23 +64,21 @@
   </section>
 
   <section class="preview-control">
-    <h3>Live Preview (on-device RTMP)</h3>
-    <p class="hint" id="preview-hint">Starts MediaMTX on the tablet to ingest camera streams. Only works inside the Android APK build.</p>
-    <div class="preview-row">
-      <button id="btn-preview" class="btn btn-secondary">Start RTMP Server</button>
-      <span id="preview-status" class="chip">idle</span>
+    <h3>Live Preview</h3>
+    <p class="hint" id="preview-hint">Before pairing, enable your tablet's mobile hotspot. Enter its SSID and password below. Tap Start Preview to send the cameras onto the hotspot and ingest RTMP locally. Only works inside the Android APK build.</p>
+    <div class="preview-inputs">
+      <label class="field">
+        <span>Hotspot SSID</span>
+        <input type="text" id="preview-ssid" autocomplete="off" placeholder="MyTablet" />
+      </label>
+      <label class="field">
+        <span>Hotspot password</span>
+        <input type="password" id="preview-pass" autocomplete="off" placeholder="••••••••" />
+      </label>
     </div>
-    <div id="preview-urls" class="preview-urls" hidden>
-      <div class="url-block">
-        <div class="url-label">Camera push URL (set in DJI Mimo → Live Streaming → RTMP):</div>
-        <code id="url-rtmp1">rtmp://—/cam1</code>
-        <code id="url-rtmp2">rtmp://—/cam2</code>
-      </div>
-      <div class="url-block">
-        <div class="url-label">Playback URL (auto-loaded in the video panes above):</div>
-        <code id="url-hls1">http://localhost:8888/cam1/index.m3u8</code>
-        <code id="url-hls2">http://localhost:8888/cam2/index.m3u8</code>
-      </div>
+    <div class="preview-row">
+      <button id="btn-preview" class="btn btn-secondary">Start Preview</button>
+      <span id="preview-status" class="chip">idle</span>
     </div>
   </section>
 
