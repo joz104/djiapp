@@ -318,15 +318,18 @@ const dji55Driver = {
     };
   },
 
-  // Empty-payload message that transitions the camera from "cleaning up"
-  // to "ready to receive wifi credentials". Must be sent between
-  // stopStreaming and setupWifi or setupWifi times out.
+  // Transitions the camera from "cleaning up" to "ready to receive wifi
+  // credentials". Must be sent between stopStreaming and setupWifi or
+  // setupWifi times out. Payload is a single magic byte 0x1a per
+  // node-osmo's DjiPreparingToLivestreamMessagePayload static payload —
+  // NOT empty, empirically the camera returns error 0xda on an empty
+  // payload and then refuses all subsequent commands.
   prepareStreamFrame() {
     return {
       target: PREP_STREAM_TARGET,
       txId: PREP_STREAM_TXID,
       type: PREP_STREAM_TYPE,
-      payload: new Uint8Array(0),
+      payload: new Uint8Array([0x1a]),
       timeoutMs: 5000,
     };
   },
