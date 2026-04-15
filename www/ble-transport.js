@@ -25,16 +25,29 @@
 //   webBluetoothTransport:  { kind:'web', device, server, chars:Map<key,char>, name, id }
 //   capacitorBleTransport:  { kind:'cap', deviceId, name }
 
-// ---- Base64 <-> Uint8Array (needed for Capacitor's native bridge) ------
-function uint8ToBase64(bytes) {
-  let bin = '';
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin);
+// ---- Hex string <-> Uint8Array (Capacitor BLE native bridge format) ----
+// The @capacitor-community/bluetooth-le plugin's native Android code sends
+// and receives byte values as lowercase hex strings (NOT base64) — verified
+// against dist/esm/conversion.js's dataViewToHexString/hexStringToDataView
+// helpers. Passing base64 to the plugin throws:
+//   java.lang.IllegalArgumentException: Invalid Hexadecimal Character: <X>
+// inside ConversionKt.toDigit at Device.write / writeWithoutResponse.
+function uint8ToHex(bytes) {
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) {
+    const h = bytes[i].toString(16);
+    out += h.length === 1 ? '0' + h : h;
+  }
+  return out;
 }
-function base64ToUint8(b64) {
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+function hexToUint8(hex) {
+  if (!hex) return new Uint8Array(0);
+  // Strip any whitespace the plugin may inject between bytes.
+  const clean = hex.replace(/\s+/g, '');
+  const out = new Uint8Array(clean.length >> 1);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(clean.substr(i << 1, 2), 16);
+  }
   return out;
 }
 
@@ -214,9 +227,10 @@ export const capacitorBleTransport = {
     const ble = capPlugin();
     const eventKey = `notification|${handle.deviceId}|${serviceUuid}|${charUuid}`;
     const listener = await ble.addListener(eventKey, (event) => {
-      // event.value is base64 in the native bridge; decode to DataView
-      // so the receiver code matches the Web Bluetooth contract.
-      const bytes = base64ToUint8(event.value || '');
+      // event.value is a lowercase hex string in the native bridge; decode
+      // to a DataView so the receiver code matches the Web Bluetooth
+      // contract.
+      const bytes = hexToUint8(event.value || '');
       const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       onValue(dv);
     });
@@ -234,7 +248,7 @@ export const capacitorBleTransport = {
       deviceId: handle.deviceId,
       service: serviceUuid,
       characteristic: charUuid,
-      value: uint8ToBase64(bytes),
+      value: uint8ToHex(bytes),
     });
   },
 };
