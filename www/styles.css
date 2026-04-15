@@ -247,7 +247,8 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
-.field input {
+.field input,
+.field select {
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--fg);
@@ -255,8 +256,21 @@ body {
   border-radius: 6px;
   font-size: 14px;
   font-family: inherit;
+  /* Reset native select chrome so it matches the text inputs. */
+  appearance: none;
+  -webkit-appearance: none;
 }
-.field input:focus {
+.field select {
+  /* Custom chevron in place of the native arrow. */
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+                    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 14px) center, calc(100% - 9px) center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 26px;
+}
+.field input:focus,
+.field select:focus {
   outline: none;
   border-color: var(--muted);
 }

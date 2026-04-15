@@ -172,29 +172,6 @@ dji.addEventListener('statusChange', () => {
 
 renderPairedList();
 updateCamChips();
-const REC_TEST_VARIANTS = {
-  'start-0102':       { target: 0x0102, payload: [0x01], label: 'start@0102'       },
-  'stop-0102':        { target: 0x0102, payload: [0x00], label: 'stop-00@0102'     },
-  'stop-0102-alt1':   { target: 0x0102, payload: [0x02], label: 'stop-02@0102'     },
-  'stop-0102-empty':  { target: 0x0102, payload: [],     label: 'stop-empty@0102'  },
-};
-
-document.querySelectorAll('[data-rec-test]').forEach((btn) => {
-  btn.addEventListener('click', async () => {
-    const key = btn.getAttribute('data-rec-test');
-    const variant = REC_TEST_VARIANTS[key];
-    if (!variant) return;
-    try {
-      await dji.testRecordFrame({
-        target: variant.target,
-        payload: new Uint8Array(variant.payload),
-        label: variant.label,
-      });
-    } catch (e) {
-      log('err', `Rec test ${key} error: ${e.message}`);
-    }
-  });
-});
 
 // ---- Live preview (end-to-end on-device) --------------------------------
 // Workflow:
@@ -218,13 +195,27 @@ const previewStatus = document.getElementById('preview-status');
 const previewHint = document.getElementById('preview-hint');
 const previewSsid = document.getElementById('preview-ssid');
 const previewPass = document.getElementById('preview-pass');
+const previewRes = document.getElementById('preview-res');
+const previewFps = document.getElementById('preview-fps');
+const previewBr  = document.getElementById('preview-br');
 
 const PREVIEW_SSID_KEY = 'fmc-preview-ssid';
 const PREVIEW_PASS_KEY = 'fmc-preview-pass';
+const PREVIEW_RES_KEY  = 'fmc-preview-res';
+const PREVIEW_FPS_KEY  = 'fmc-preview-fps';
+const PREVIEW_BR_KEY   = 'fmc-preview-br';
+
 previewSsid.value = localStorage.getItem(PREVIEW_SSID_KEY) || '';
 previewPass.value = localStorage.getItem(PREVIEW_PASS_KEY) || '';
+previewRes.value  = localStorage.getItem(PREVIEW_RES_KEY)  || previewRes.value;
+previewFps.value  = localStorage.getItem(PREVIEW_FPS_KEY)  || previewFps.value;
+previewBr.value   = localStorage.getItem(PREVIEW_BR_KEY)   || previewBr.value;
+
 previewSsid.addEventListener('change', () => localStorage.setItem(PREVIEW_SSID_KEY, previewSsid.value));
 previewPass.addEventListener('change', () => localStorage.setItem(PREVIEW_PASS_KEY, previewPass.value));
+previewRes.addEventListener('change', () => localStorage.setItem(PREVIEW_RES_KEY, previewRes.value));
+previewFps.addEventListener('change', () => localStorage.setItem(PREVIEW_FPS_KEY, previewFps.value));
+previewBr.addEventListener('change',  () => localStorage.setItem(PREVIEW_BR_KEY, previewBr.value));
 
 let previewRunning = false;
 
@@ -254,6 +245,9 @@ if (!mediaMtxPlugin()) {
   previewBtn.disabled = true;
   previewSsid.disabled = true;
   previewPass.disabled = true;
+  previewRes.disabled = true;
+  previewFps.disabled = true;
+  previewBr.disabled = true;
 }
 
 previewBtn.addEventListener('click', async () => {
@@ -292,9 +286,13 @@ previewBtn.addEventListener('click', async () => {
     log('ok', `MediaMTX running on ${ipInfo.iface} ${ipInfo.ip}. Pushing cameras to ${baseRtmpUrl}/camN…`);
 
     setPreviewUi(false, 'configuring cameras…');
+    const resolution = previewRes.value;
+    const fps = Number(previewFps.value);
+    const bitrateKbps = Number(previewBr.value);
+    log('ok', `Preview quality: ${resolution} @ ${fps}fps ${bitrateKbps}kbps`);
     let results;
     try {
-      results = await dji.startPreviewAll({ ssid, password: pass, baseRtmpUrl });
+      results = await dji.startPreviewAll({ ssid, password: pass, baseRtmpUrl, resolution, fps, bitrateKbps });
     } catch (e) {
       log('err', `Preview setup failed: ${e.message}`);
       try { await mmtx.stop(); } catch {}
