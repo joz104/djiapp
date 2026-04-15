@@ -371,15 +371,34 @@ previewRes.addEventListener('change',  () => localStorage.setItem(PREVIEW_RES_KE
 previewFps.addEventListener('change',  () => localStorage.setItem(PREVIEW_FPS_KEY, previewFps.value));
 previewBr.addEventListener('change',   () => localStorage.setItem(PREVIEW_BR_KEY, previewBr.value));
 
+// Preview state is the single source of truth. Both the drawer button
+// (#btn-preview) and the topbar button (#btn-preview-main) always
+// reflect this — every state transition MUST go through setPreviewUi.
 let previewRunning = false;
+
+// Mid-flight status labels that should be shown on the topbar button too
+// so the home screen isn't a black hole during the ~30s setupWifi wait.
+const MID_FLIGHT_LABELS = new Set([
+  'starting server…',
+  'finding tablet IP…',
+  'configuring cameras…',
+  'stopping cameras…',
+]);
 
 function setPreviewUi(running, label) {
   previewRunning = running;
-  const txt = running ? 'Stop Preview' : 'Start Preview';
-  previewBtn.textContent = txt;
-  previewBtnMain.textContent = txt;
-  // When the main-bar button is in the "stop" state we want it to look
-  // distinct from the other topbar buttons so it's easy to find.
+  const baseTxt = running ? 'Stop Preview' : 'Start Preview';
+  // Drawer button: just the base text. The small status chip next to
+  // it shows the detailed label.
+  previewBtn.textContent = baseTxt;
+  // Topbar button: show the mid-flight label inline so the user can
+  // see progress without opening the drawer. On final states (idle /
+  // streaming) it reverts to the base text.
+  if (label && MID_FLIGHT_LABELS.has(label)) {
+    previewBtnMain.textContent = label;
+  } else {
+    previewBtnMain.textContent = baseTxt;
+  }
   previewBtnMain.classList.toggle('btn-preview-active', running);
   previewStatus.textContent = label || (running ? 'streaming' : 'idle');
   previewStatus.className = 'chip ' + (running ? 'ok' : '');
@@ -511,6 +530,30 @@ async function onPreviewClick() {
 
 previewBtn.addEventListener('click', onPreviewClick);
 previewBtnMain.addEventListener('click', onPreviewClick);
+
+// On app reload / resume, ask the MediaMtx plugin whether the server is
+// still running. The foreground service survives the WebView being killed
+// and reloaded, so we need to resync the UI instead of defaulting both
+// buttons to "Start Preview" when the cameras are actually still live.
+(async () => {
+  const mmtx = mediaMtxPlugin();
+  if (!mmtx) return;
+  try {
+    const status = await mmtx.status();
+    if (status && status.running) {
+      // MediaMtx is still running from a prior session. We don't have BLE
+      // sessions to the cameras in this WebView context so we can't cleanly
+      // stop them from here, but we DO have HLS endpoints that should still
+      // be serving. Resync the UI and reload the panes.
+      log('warn', 'MediaMTX was already running from a prior session. Restoring preview UI.');
+      setPreviewUi(true, 'streaming (restored)');
+      pane1.load('http://localhost:8888/cam1/index.m3u8');
+      pane2.load('http://localhost:8888/cam2/index.m3u8');
+    }
+  } catch (e) {
+    log('warn', `MediaMtx status check failed: ${e.message}`);
+  }
+})();
 
 // ---- Setup drawer (right-side slide-in) ---------------------------------
 const setupDrawer = document.getElementById('setup-drawer');
