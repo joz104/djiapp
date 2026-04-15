@@ -47,3 +47,39 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Rename APK with commit info
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+             field-multicam-${SHORT_SHA}.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+             field-multicam-latest.apk
+
+      # Publish a rolling "latest" release so you can download the APK
+      # directly from https://github.com/joz104/djiapp/releases/tag/v2-latest
+      # without needing to be logged in or fight with zip artifacts.
+      - name: Publish rolling latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v2-latest
+          name: "v2-capacitor latest debug build"
+          body: |
+            Auto-updated debug build from the latest push to `v2-capacitor`.
+            Commit: `${{ github.sha }}`
+            Built: `${{ github.event.head_commit.timestamp }}`
+
+            **How to install on your phone:**
+            1. Tap `field-multicam-latest.apk` below to download.
+            2. When prompted, allow your browser to install unknown apps (one-time setting).
+            3. Open the downloaded file from your Downloads notification or Files app.
+
+            Not signed. Debug key only — do not publish to a store.
+          files: |
+            field-multicam-latest.apk
+            field-multicam-*.apk
+          prerelease: true
+          draft: false
+          make_latest: "false"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
