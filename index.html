@@ -65,16 +65,12 @@
 
   <section class="rec-tests">
     <h3>Record opcode tests (experimental)</h3>
-    <p class="hint">Candidate: CmdSet=0x02 / CmdID=0x02 "Do Record". Watch the camera screen for the REC indicator after each tap.</p>
+    <p class="hint">CONFIRMED: target=0x0102, type=0x020240, payload=[0x01] starts recording on Action 3. Hunting for stop now.</p>
     <div class="rec-test-row">
-      <button class="btn btn-secondary" data-rec-test="empty-0802">target 0x0802, empty</button>
-      <button class="btn btn-secondary" data-rec-test="start-0802">target 0x0802, [0x01]</button>
-      <button class="btn btn-secondary" data-rec-test="stop-0802">target 0x0802, [0x00]</button>
-    </div>
-    <div class="rec-test-row">
-      <button class="btn btn-secondary" data-rec-test="empty-0102">target 0x0102, empty</button>
-      <button class="btn btn-secondary" data-rec-test="start-0102">target 0x0102, [0x01]</button>
-      <button class="btn btn-secondary" data-rec-test="empty-0202">target 0x0202, empty</button>
+      <button class="btn btn-secondary" data-rec-test="start-0102">START [0x01] ✓</button>
+      <button class="btn btn-secondary" data-rec-test="stop-0102">STOP [0x00]</button>
+      <button class="btn btn-secondary" data-rec-test="stop-0102-alt1">STOP [0x02]</button>
+      <button class="btn btn-secondary" data-rec-test="stop-0102-empty">STOP (empty)</button>
     </div>
   </section>
 

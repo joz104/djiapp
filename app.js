@@ -136,12 +136,10 @@ dji.addEventListener('statusChange', () => {
 renderPairedList();
 updateCamChips();
 const REC_TEST_VARIANTS = {
-  'empty-0802': { target: 0x0802, payload: [],     label: 'empty@0802' },
-  'start-0802': { target: 0x0802, payload: [0x01], label: 'start@0802' },
-  'stop-0802':  { target: 0x0802, payload: [0x00], label: 'stop@0802'  },
-  'empty-0102': { target: 0x0102, payload: [],     label: 'empty@0102' },
-  'start-0102': { target: 0x0102, payload: [0x01], label: 'start@0102' },
-  'empty-0202': { target: 0x0202, payload: [],     label: 'empty@0202' },
+  'start-0102':       { target: 0x0102, payload: [0x01], label: 'start@0102'       },
+  'stop-0102':        { target: 0x0102, payload: [0x00], label: 'stop-00@0102'     },
+  'stop-0102-alt1':   { target: 0x0102, payload: [0x02], label: 'stop-02@0102'     },
+  'stop-0102-empty':  { target: 0x0102, payload: [],     label: 'stop-empty@0102'  },
 };
 
 document.querySelectorAll('[data-rec-test]').forEach((btn) => {
