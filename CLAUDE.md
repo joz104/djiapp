@@ -88,11 +88,11 @@ See `docs/ROADMAP.md` for the full picture. As of last session:
 - ✅ PWA shell, offline caching, dark theme, dual video panes
 - ✅ BLE scanning, connecting, GATT service/char discovery
 - ✅ 0x55 protocol frame builder / parser with correct CRCs (validated against real camera frame)
-- ✅ Pair handshake sends; camera responds; camera prompts for pairing code confirmation on-screen
-- 🚧 **Post-pair-code flow unknown** — what happens after the user taps accept on the camera?
-- ❌ **Record-to-SD opcode unknown** for the 0x55 protocol. node-osmo only has RTMP livestream opcodes, not SD record.
-- ❌ Action 4 — not yet received, may speak a different protocol dialect
-- ❌ `startRecordAll` / `stopRecordAll` are currently stubs that log "not implemented"
+- ✅ Pair handshake works. Camera replies `0x00 0x01` immediately on txId 0x8092 (no PIN-confirmation follow-up frame observed — likely auto-accept once previously paired).
+- ✅ **Record-to-SD opcode confirmed on Action 3.** `target=0x0102, type=0x020240, payload=[0x01]` starts recording; `[0x00]` stops. Camera replies on `target=0x0201, type=0x0202c0` with payload `0x00` on success (error codes seen: `0xe0` wrong target, `0xe3` bad arg). Opcode source: DJI DUML CmdSet=0x02 / CmdID=0x02 "Do Record" from xaionaro-go/djictl + o-gs/dji-firmware-tools camera dissector.
+- ✅ `startRecordAll` / `stopRecordAll` wired. Master Record button functional against the Action 3.
+- 🚧 **Status-push channel does NOT reflect recording state** — `target=0x205, type=0x20d00` is a slow battery/temp heartbeat only. Don't rely on it to confirm record state; use the command's own response payload instead.
+- ❌ Action 4 — not yet received, may speak a different protocol dialect. The experimental test panel in the UI is kept around so we can re-probe target/payload when it arrives.
 
 ## Reference repos (in priority order)
 

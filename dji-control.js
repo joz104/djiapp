@@ -127,15 +127,18 @@ const PREP_STREAM_TARGET = 0x0802;
 const PREP_STREAM_TXID   = 0x8C12;
 const PREP_STREAM_TYPE   = 0xE10240;
 
-// ---- Record opcode (candidate — EXPERIMENTAL) --------------------------
-// Per DJI DUML spec (o-gs/dji-firmware-tools dji-dumlv1-camera.lua) and
-// xaionaro-go/djictl, Camera CmdSet=0x02 / CmdID=0x02 = "Do Record".
-// Type byte layout on the wire is [flags, cmdSet, cmdId] so u24 = 0x020240.
-// Target is a guess: STOP_STREAM/PREP_STREAM both use target=0x0802 with
-// CmdSet=0x02, so we start there.
-const REC_TYPE           = 0x020240;
-const REC_TARGET_DEFAULT = 0x0802;
-let   _recTxId = 0x9001; // incrementing txId for test commands
+// ---- Record opcodes (confirmed on Osmo Action 3) -----------------------
+// Empirically validated 2026-04-14 against a real Action 3:
+//   target 0x0102, type 0x020240 (CmdSet=0x02/CmdID=0x02 "Do Record"),
+//   payload [0x01] = start, payload [0x00] = stop.
+// Camera replies on target 0x0201 with type 0x0202c0 payload [0x00] on
+// success, [0xe0]/[0xe3] on various error conditions. Source for opcode:
+// xaionaro-go/djictl + o-gs/dji-firmware-tools DJI DUML camera dissector.
+const RECORD_TARGET    = 0x0102;
+const RECORD_TYPE      = 0x020240;
+const RECORD_START_PAYLOAD = new Uint8Array([0x01]);
+const RECORD_STOP_PAYLOAD  = new Uint8Array([0x00]);
+let   _recTxId = 0x9001;
 function nextRecTxId() { _recTxId = (_recTxId + 1) & 0xFFFF; return _recTxId; }
 
 // Hard-coded 33-byte pair token (ASCII " 284ae5b8d76b3375a04a6417ad71bea3")
@@ -209,24 +212,42 @@ export class DJIControl extends EventTarget {
   }
 
   async startRecordAll() {
-    const sessions = Array.from(this.pairedCameras.values()).filter(s => s.connected);
-    if (sessions.length === 0) throw new Error('No connected cameras');
-    this.log('warn', 'Record command not implemented for 0x55 protocol — handshake-only build.');
-    return sessions.map(s => ({ ok: false, session: s, err: new Error('stub') }));
+    return this._recordFanOut('start');
   }
 
   async stopRecordAll() {
-    const sessions = Array.from(this.pairedCameras.values()).filter(s => s.connected);
-    if (sessions.length === 0) throw new Error('No connected cameras');
-    this.log('warn', 'Record stop command not implemented for 0x55 protocol — handshake-only build.');
-    return sessions.map(s => ({ ok: false, session: s, err: new Error('stub') }));
+    return this._recordFanOut('stop');
   }
 
-  // ---- EXPERIMENTAL record opcode tests --------------------------------
-  // Sends a candidate "Do Record" frame (CmdSet=0x02, CmdID=0x02) to every
-  // connected camera and logs any response. Use this to hunt for the right
-  // target+payload combo by watching the camera screen for REC indicator.
-  async testRecordFrame({ target = REC_TARGET_DEFAULT, type = REC_TYPE, payload = new Uint8Array(0), label = 'test' } = {}) {
+  async _recordFanOut(action) {
+    const sessions = Array.from(this.pairedCameras.values()).filter(s => s.connected);
+    if (sessions.length === 0) throw new Error('No connected cameras');
+    const payload = action === 'start' ? RECORD_START_PAYLOAD : RECORD_STOP_PAYLOAD;
+    return Promise.all(sessions.map(async (s) => {
+      const txId = nextRecTxId();
+      try {
+        const resp = await s.sendAndAwait({
+          target: RECORD_TARGET,
+          txId,
+          type: RECORD_TYPE,
+          payload,
+          timeoutMs: 3000,
+        });
+        const status = resp.payload[0];
+        if (status !== 0x00) {
+          throw new Error(`camera returned error 0x${status.toString(16)}`);
+        }
+        s.recording = (action === 'start');
+        this._emitStatus(s);
+        return { ok: true, session: s };
+      } catch (e) {
+        return { ok: false, session: s, err: e };
+      }
+    }));
+  }
+
+  // Manual opcode probe — used for Action 4 testing when it arrives.
+  async testRecordFrame({ target = RECORD_TARGET, type = RECORD_TYPE, payload = new Uint8Array(0), label = 'test' } = {}) {
     const sessions = Array.from(this.pairedCameras.values()).filter(s => s.connected);
     if (sessions.length === 0) {
       this.log('warn', 'No connected cameras. Pair first.');

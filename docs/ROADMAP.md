@@ -11,25 +11,19 @@ Phases, current state, and open blockers. The status log at the bottom is the ru
 - [x] GitHub Pages deploy (https://joz104.github.io/djiapp/)
 - [x] Project documentation (CLAUDE.md, README, PROTOCOL, ROADMAP)
 
-### Phase 1 — BLE handshake 🚧
+### Phase 1 — BLE handshake ✅
 - [x] Service/characteristic discovery (FFF0 / FFF3 / FFF4 / FFF5)
 - [x] Scan without service filter (`acceptAllDevices` — Action 3 doesn't advertise FFF0)
 - [x] 0x55 protocol frame builder and parser with correct CRCs
 - [x] Notification reassembly (`CameraSession.onNotification`)
-- [x] Pair message sent, camera responds
-- [x] Camera prompts for pairing code confirmation on its screen
-- [ ] Handle the post-code-confirmation flow — what frames arrive after accept?
-- [ ] Persist "already paired" state so subsequent sessions skip the code prompt
-- [ ] Test reconnect after disconnect
+- [x] Pair message sent, camera responds with `0x00 0x01` immediately
+- [ ] Test reconnect after disconnect (nice-to-have)
 
-### Phase 2 — record control ❌
-- [ ] **Find the SD record start/stop opcode.** node-osmo doesn't have it. Options:
-  - Sniff DJI Mimo over Bluetooth HCI snoop log (~30 min on Android)
-  - Grep `eerimoq/moblin` (Swift upstream) for `record`, `REC`, `shutter`, `capture`
-  - Decode the camera's periodic status push and watch which bits change when the user manually presses the shutter on the camera
-- [ ] Implement `startRecord()` and `stopRecord()` in `CameraSession`
-- [ ] Wire `startRecordAll` / `stopRecordAll` fan-out in `DJIControl` (currently stubs)
-- [ ] Measure end-to-end latency between the two cameras when both are triggered
+### Phase 2 — record control ✅
+- [x] **Record opcode found.** `target=0x0102, type=0x020240 (CmdSet=0x02/CmdID=0x02 "Do Record"), payload=[0x01] start / [0x00] stop.` Opcode from DJI DUML dictionary (xaionaro-go/djictl + o-gs/dji-firmware-tools dissector); validated empirically against Action 3 on 2026-04-14 — camera replies on `target=0x0201, type=0x0202c0` with payload `0x00` on success.
+- [x] Wire `startRecordAll` / `stopRecordAll` fan-out in `DJIControl` with `Promise.all` for parallel fire.
+- [ ] Measure end-to-end latency between the two cameras when both are triggered (needs Action 4)
+- [ ] Track recording state robustly — we currently flip `session.recording` on command success, but if the user presses the camera's physical shutter our state goes stale. Low priority until it matters.
 
 ### Phase 3 — second camera (Action 4) ❌
 - [ ] Receive Action 4 hardware
@@ -55,13 +49,11 @@ Phases, current state, and open blockers. The status log at the bottom is the ru
 
 ## Open blockers (priority order)
 
-1. **Post-pair-code flow unknown.** The Action 3 prompts for a pairing code confirmation on its screen after we send the pair message. What happens next? Need a full log from a pair attempt where the user taps accept. This unblocks reconnects and clean handshake.
+1. **Action 4 untested.** Don't know yet whether it speaks 0x55, 0xAA, or both, and whether the same record opcode (`0x0102 / 0x020240`) works there. May require a second frame builder + protocol selector per camera. The experimental record-test panel in the UI is kept so we can probe it when the hardware arrives.
 
-2. **SD record opcode unknown.** node-osmo has zero record-to-SD code. Three paths forward (sniff Mimo / grep moblin / decode status push). The sniff-Mimo path is probably fastest — user has Android, a 30-minute Wireshark session likely yields the exact bytes.
+2. **Camera goes silent after one pair attempt.** Once the Action 3 accepts a connection (even our rogue one), it stops advertising for a while. Workaround: close Chrome tab, power-cycle camera, retry. Could be fixed by a clean disconnect path (send a disconnect message, release GATT server cleanly). Low priority.
 
-3. **Action 4 untested.** Don't know yet whether it speaks 0x55, 0xAA, or both. May require a second frame builder + protocol selector per camera.
-
-4. **Camera goes silent after one pair attempt.** Once the Action 3 accepts a connection (even our rogue one), it stops advertising for a while. Workaround: close Chrome tab, power-cycle camera, retry. Could be fixed by a clean disconnect path (send a disconnect message, release GATT server cleanly). Low priority.
+3. **Recording state tracking is command-local.** `session.recording` is only updated from successful start/stop commands. If the user hits the physical shutter on the camera, the UI state goes stale. The status push at `target=0x205` does NOT reflect recording state — confirmed by a 84s capture spanning a real record on/off where not a single byte changed. If we need true state we'd have to find a different status channel. Low priority.
 
 ## Bets I'm hedging
 
@@ -82,3 +74,18 @@ Append one entry per session. Keep each entry brief — what changed, what we le
 - Set up project documentation (CLAUDE.md, README, PROTOCOL, ROADMAP).
 - Commits: `init` → `Vendor hls.js` → `Use acceptAllDevices` → `Switch to 0x55 protocol`.
 - Next session: log the full byte exchange during a pair-code-accept flow, then start the SD record opcode hunt (lean toward sniffing Mimo on Android).
+
+### 2026-04-14 (later) — Record opcode solved for Action 3
+- Ruled out the status-push channel (`target=0x205, type=0x20d00`) as a record-state signal — 84s of captures across a real physical-button record on/off showed not a single byte change related to recording. It's a slow battery/temp heartbeat only.
+- Did NOT need to sniff DJI Mimo. Web research turned up the opcode in the DJI DUML dictionary: CmdSet=0x02 / CmdID=0x02 "Do Record", documented in [xaionaro-go/djictl pkg/duml/message_type.go](https://github.com/xaionaro-go/djictl/blob/main/pkg/duml/message_type.go) and [o-gs/dji-firmware-tools dji-dumlv1-camera.lua](https://github.com/o-gs/dji-firmware-tools/blob/master/comm_dissector/wireshark/dji-dumlv1-camera.lua). node-osmo never ported it because it only needed livestream.
+- Shipped an experimental test panel (commits 3d3c1af/v7 and f7ba816/v8) that sent candidate frames across 3 target guesses × a few payload variants. Empirical results against the Action 3:
+  - `target=0x0802` → all payloads rejected with response `0xe0` (wrong target)
+  - `target=0x0202` → frame echoed back with no effect (target unknown)
+  - `target=0x0102, payload=empty` → response `0xe3` (right target, missing argument)
+  - `target=0x0102, payload=[0x01]` → camera starts SD recording, response `0x00` ✓
+  - `target=0x0102, payload=[0x00]` → camera stops SD recording, response `0x00` ✓
+- Camera reply uses `target=0x0201` (sender/receiver bytes swapped vs. 0x0102) and `type=0x0202c0` (0x40 flag flipped to 0xc0 = response bit). Payload byte 0 is status: `0x00`=ok, `0xe0`/`0xe3`=various errors.
+- Wired `startRecordAll` / `stopRecordAll` in `DJIControl` to real frames with `Promise.all` fan-out. Master Record button now functional against the Action 3.
+- Test panel kept in the UI for future Action 4 probing.
+- Commits: `3d3c1af` (v7 test harness) → `f7ba816` (v8 stop candidates) → next: v9 wiring.
+- Next session: probably Action 4 hardware testing once it arrives, or RTMP live-preview pipeline (Phase 4).

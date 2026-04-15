@@ -65,7 +65,7 @@
 
   <section class="rec-tests">
     <h3>Record opcode tests (experimental)</h3>
-    <p class="hint">CONFIRMED: target=0x0102, type=0x020240, payload=[0x01] starts recording on Action 3. Hunting for stop now.</p>
+    <p class="hint">CONFIRMED on Action 3: target=0x0102, type=0x020240, [0x01]=start, [0x00]=stop. Master Record button now uses these. Buttons below are kept for Action 4 opcode probing.</p>
     <div class="rec-test-row">
       <button class="btn btn-secondary" data-rec-test="start-0102">START [0x01] ✓</button>
       <button class="btn btn-secondary" data-rec-test="stop-0102">STOP [0x00]</button>
