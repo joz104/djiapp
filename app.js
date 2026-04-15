@@ -135,6 +135,32 @@ dji.addEventListener('statusChange', () => {
 
 renderPairedList();
 updateCamChips();
+const REC_TEST_VARIANTS = {
+  'empty-0802': { target: 0x0802, payload: [],     label: 'empty@0802' },
+  'start-0802': { target: 0x0802, payload: [0x01], label: 'start@0802' },
+  'stop-0802':  { target: 0x0802, payload: [0x00], label: 'stop@0802'  },
+  'empty-0102': { target: 0x0102, payload: [],     label: 'empty@0102' },
+  'start-0102': { target: 0x0102, payload: [0x01], label: 'start@0102' },
+  'empty-0202': { target: 0x0202, payload: [],     label: 'empty@0202' },
+};
+
+document.querySelectorAll('[data-rec-test]').forEach((btn) => {
+  btn.addEventListener('click', async () => {
+    const key = btn.getAttribute('data-rec-test');
+    const variant = REC_TEST_VARIANTS[key];
+    if (!variant) return;
+    try {
+      await dji.testRecordFrame({
+        target: variant.target,
+        payload: new Uint8Array(variant.payload),
+        label: variant.label,
+      });
+    } catch (e) {
+      log('err', `Rec test ${key} error: ${e.message}`);
+    }
+  });
+});
+
 document.getElementById('btn-copy-log').addEventListener('click', async () => {
   const text = Array.from(logEl.childNodes).map((n) => n.textContent).join('\n');
   try {

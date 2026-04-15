@@ -213,6 +213,32 @@ body {
   padding: 0 14px 14px;
 }
 
+.rec-tests {
+  padding: 0 14px 14px;
+}
+.rec-tests h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.rec-tests .hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.rec-test-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.rec-test-row .btn {
+  font-size: 12px;
+  padding: 8px 10px;
+}
+
 .paired h3 {
   margin: 0 0 8px;
   font-size: 13px;

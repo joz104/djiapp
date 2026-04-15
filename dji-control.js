@@ -127,6 +127,17 @@ const PREP_STREAM_TARGET = 0x0802;
 const PREP_STREAM_TXID   = 0x8C12;
 const PREP_STREAM_TYPE   = 0xE10240;
 
+// ---- Record opcode (candidate — EXPERIMENTAL) --------------------------
+// Per DJI DUML spec (o-gs/dji-firmware-tools dji-dumlv1-camera.lua) and
+// xaionaro-go/djictl, Camera CmdSet=0x02 / CmdID=0x02 = "Do Record".
+// Type byte layout on the wire is [flags, cmdSet, cmdId] so u24 = 0x020240.
+// Target is a guess: STOP_STREAM/PREP_STREAM both use target=0x0802 with
+// CmdSet=0x02, so we start there.
+const REC_TYPE           = 0x020240;
+const REC_TARGET_DEFAULT = 0x0802;
+let   _recTxId = 0x9001; // incrementing txId for test commands
+function nextRecTxId() { _recTxId = (_recTxId + 1) & 0xFFFF; return _recTxId; }
+
 // Hard-coded 33-byte pair token (ASCII " 284ae5b8d76b3375a04a6417ad71bea3")
 // followed by djiPackString("love") = [0x04, 'l','o','v','e'].
 const PAIR_TOKEN = new Uint8Array([
@@ -197,10 +208,6 @@ export class DJIControl extends EventTarget {
     this._emitStatus(s);
   }
 
-  // NOTE: The 0x55 protocol as documented by node-osmo has NO record-to-SD
-  // opcode — it only controls RTMP livestreaming. These methods are stubs
-  // until we either (a) sniff a real record opcode from DJI Mimo, or
-  // (b) pivot to RTMP-livestream-as-recording via a local RTMP server.
   async startRecordAll() {
     const sessions = Array.from(this.pairedCameras.values()).filter(s => s.connected);
     if (sessions.length === 0) throw new Error('No connected cameras');
@@ -213,6 +220,29 @@ export class DJIControl extends EventTarget {
     if (sessions.length === 0) throw new Error('No connected cameras');
     this.log('warn', 'Record stop command not implemented for 0x55 protocol — handshake-only build.');
     return sessions.map(s => ({ ok: false, session: s, err: new Error('stub') }));
+  }
+
+  // ---- EXPERIMENTAL record opcode tests --------------------------------
+  // Sends a candidate "Do Record" frame (CmdSet=0x02, CmdID=0x02) to every
+  // connected camera and logs any response. Use this to hunt for the right
+  // target+payload combo by watching the camera screen for REC indicator.
+  async testRecordFrame({ target = REC_TARGET_DEFAULT, type = REC_TYPE, payload = new Uint8Array(0), label = 'test' } = {}) {
+    const sessions = Array.from(this.pairedCameras.values()).filter(s => s.connected);
+    if (sessions.length === 0) {
+      this.log('warn', 'No connected cameras. Pair first.');
+      return;
+    }
+    const pl = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+    this.log('warn', `[REC TEST ${label}] target=0x${target.toString(16)} type=0x${type.toString(16)} payload=${pl.length ? hex(pl) : '(empty)'}`);
+    for (const s of sessions) {
+      const txId = nextRecTxId();
+      try {
+        const resp = await s.sendAndAwait({ target, txId, type, payload: pl, timeoutMs: 2500 });
+        this.log('ok', `[REC TEST ${label}] ${s.device.name || s.device.id} responded: target=0x${resp.target.toString(16)} type=0x${resp.type.toString(16)} payload=${hex(resp.payload)}`);
+      } catch (e) {
+        this.log('warn', `[REC TEST ${label}] ${s.device.name || s.device.id}: no same-txId response (${e.message}). Watch camera screen + subsequent frames.`);
+      }
+    }
   }
 }
 
