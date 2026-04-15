@@ -163,10 +163,10 @@
       <ul id="paired-list"></ul>
     </section>
 
-    <!-- Hidden by default. Unlocked via long-press on the topbar title
-         (stores localStorage.fmc-dev='1'). Used to find the Osmo Action 3
-         camera mode-switch opcode by brute-force probing. -->
-    <section class="dev-probe" id="dev-probe-panel" hidden>
+    <!-- Always visible. Used to find the Osmo Action 3 camera mode-switch
+         opcode by brute-force probing. Remove once we know the winning
+         combination. -->
+    <section class="dev-probe" id="dev-probe-panel">
       <h3>Mode Switch Probes (dev)</h3>
       <p class="hint">Put the camera in <strong>Photo mode</strong>. Tap each button and watch the camera screen. Whichever flips it to Video mode is the winning opcode. Responses appear in the log.</p>
       <div class="dev-probe-row">
