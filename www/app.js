@@ -172,6 +172,81 @@ document.querySelectorAll('[data-rec-test]').forEach((btn) => {
   });
 });
 
+// ---- Live preview (on-device RTMP via Capacitor MediaMtx plugin) --------
+const mediaMtxPlugin = () =>
+  (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.MediaMtx) || null;
+
+const previewBtn = document.getElementById('btn-preview');
+const previewStatus = document.getElementById('preview-status');
+const previewUrlsEl = document.getElementById('preview-urls');
+const previewHint = document.getElementById('preview-hint');
+
+let previewRunning = false;
+
+function setPreviewUi(running) {
+  previewRunning = running;
+  previewBtn.textContent = running ? 'Stop RTMP Server' : 'Start RTMP Server';
+  previewStatus.textContent = running ? 'running' : 'idle';
+  previewStatus.className = 'chip ' + (running ? 'ok' : '');
+  previewUrlsEl.hidden = !running;
+}
+
+async function pickTabletIp() {
+  const mmtx = mediaMtxPlugin();
+  if (!mmtx) return null;
+  try {
+    const { addresses } = await mmtx.getLocalIps();
+    if (!addresses || !addresses.length) return null;
+    // Prefer 192.168.x.x (typical hotspot range) over other interfaces.
+    const lan = addresses.find((a) => /^192\.168\./.test(a.ip));
+    return lan || addresses[0];
+  } catch (e) {
+    log('warn', `getLocalIps failed: ${e.message}`);
+    return null;
+  }
+}
+
+function updatePreviewUrls(ip) {
+  document.getElementById('url-rtmp1').textContent = `rtmp://${ip}:1935/cam1`;
+  document.getElementById('url-rtmp2').textContent = `rtmp://${ip}:1935/cam2`;
+  document.getElementById('url-hls1').textContent = `http://localhost:8888/cam1/index.m3u8`;
+  document.getElementById('url-hls2').textContent = `http://localhost:8888/cam2/index.m3u8`;
+}
+
+if (!mediaMtxPlugin()) {
+  previewHint.textContent = 'Live preview requires the Android APK build (MediaMtx plugin not available in browser).';
+  previewBtn.disabled = true;
+}
+
+previewBtn.addEventListener('click', async () => {
+  const mmtx = mediaMtxPlugin();
+  if (!mmtx) return;
+  try {
+    if (!previewRunning) {
+      await mmtx.start();
+      setPreviewUi(true);
+      const ipInfo = await pickTabletIp();
+      const ip = ipInfo ? ipInfo.ip : '<tablet-ip>';
+      updatePreviewUrls(ip);
+      log('ok', `MediaMTX started. Push RTMP to rtmp://${ip}:1935/cam1 and /cam2`);
+      // Auto-load the HLS URLs into the video panes. hls.js will handle retries
+      // while waiting for the cameras to actually start publishing.
+      const hls1 = `http://localhost:8888/cam1/index.m3u8`;
+      const hls2 = `http://localhost:8888/cam2/index.m3u8`;
+      document.getElementById('url1').value = hls1;
+      document.getElementById('url2').value = hls2;
+      pane1.load(hls1);
+      pane2.load(hls2);
+    } else {
+      await mmtx.stop();
+      setPreviewUi(false);
+      log('ok', 'MediaMTX stopped.');
+    }
+  } catch (e) {
+    log('err', `Preview toggle failed: ${e.message}`);
+  }
+});
+
 document.getElementById('btn-copy-log').addEventListener('click', async () => {
   const text = Array.from(logEl.childNodes).map((n) => n.textContent).join('\n');
   try {
