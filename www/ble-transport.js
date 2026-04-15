@@ -76,6 +76,29 @@ export const webBluetoothTransport = {
     };
   },
 
+  // Browser Web Bluetooth supports `navigator.bluetooth.getDevices()` to
+  // list previously-accepted devices without re-prompting. If the flag is
+  // enabled in Chrome (chrome://flags/#enable-web-bluetooth-new-permissions-backend)
+  // or the WebView is configured to allow it, we can get the device handle
+  // back directly by id. Falls back to null if unavailable.
+  async getKnownDevice({ deviceId }) {
+    if (!deviceId) throw new Error('getKnownDevice: missing deviceId');
+    if (!navigator.bluetooth.getDevices) {
+      throw new Error('Web Bluetooth getDevices() not supported');
+    }
+    const devices = await navigator.bluetooth.getDevices();
+    const device = devices.find(d => d.id === deviceId);
+    if (!device) throw new Error(`device ${deviceId} not in Web Bluetooth known-devices list`);
+    return {
+      kind: 'web',
+      device,
+      server: null,
+      chars: new Map(),
+      name: device.name,
+      id: device.id,
+    };
+  },
+
   async connect(handle, { onDisconnect }) {
     // Reset per-connection state — characteristics from a prior session
     // become invalid after gatt disconnect and must be re-fetched.
@@ -195,6 +218,21 @@ export const capacitorBleTransport = {
       deviceId: dev.deviceId,
       name: dev.name,
       id: dev.deviceId,
+      _listeners: [],
+    };
+  },
+
+  // Construct a handle for a previously-paired device WITHOUT showing the
+  // picker. Used for auto-reconnect on app startup: Android keeps the
+  // actual BT pairing so the plugin's connect() call works directly once
+  // we know the deviceId (MAC address). The handshake re-runs as normal.
+  async getKnownDevice({ deviceId, name }) {
+    if (!deviceId) throw new Error('getKnownDevice: missing deviceId');
+    return {
+      kind: 'cap',
+      deviceId,
+      name: name || deviceId,
+      id: deviceId,
       _listeners: [],
     };
   },

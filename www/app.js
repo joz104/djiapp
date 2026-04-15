@@ -148,6 +148,12 @@ dji.addEventListener('log', (ev) => log(ev.detail.kind, ev.detail.msg));
 // of when the user taps Pair. Also pops the "enable Bluetooth" system
 // dialog if the radio is off. Failures are logged but non-fatal — the Pair
 // button will retry init on click.
+//
+// After init succeeds, immediately try to auto-reconnect to the last
+// paired device (deviceId saved in localStorage by scanAndPair). This
+// is why you don't have to re-pair every app launch any more. If the
+// camera is off / out of range, it just logs a warning and the Pair
+// button still works normally.
 (async () => {
   if (!dji.isSupported()) return;
   log('ok', `BLE transport: ${dji.transport.name}`);
@@ -156,6 +162,15 @@ dji.addEventListener('log', (ev) => log(ev.detail.kind, ev.detail.msg));
     log('ok', 'Bluetooth ready.');
   } catch (e) {
     log('warn', `Bluetooth not ready yet: ${e.message}. Tap Pair to grant permissions.`);
+    return;
+  }
+  try {
+    const session = await dji.autoPairLast();
+    if (session) {
+      log('ok', `Auto-reconnected to ${session.device.name || session.device.id}`);
+    }
+  } catch (e) {
+    log('warn', `Auto-reconnect skipped: ${e.message}`);
   }
 })();
 

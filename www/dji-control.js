@@ -485,7 +485,62 @@ export class DJIControl extends EventTarget {
       optionalServices: [DJI_SERVICE, 'battery_service'],
     });
 
-    // selectDriver wants a `device` shape; give it a shim with just the name.
+    const session = await this._bringUpSession(handle);
+    // On successful pair, remember this device so we can auto-reconnect
+    // next time the app opens without the picker.
+    this._rememberDevice(handle);
+    return session;
+  }
+
+  // Auto-pair with the device saved from the last successful pair. No
+  // picker — goes straight through the transport's getKnownDevice(...)
+  // helper. Called on app startup; silently no-ops if nothing's saved
+  // or the device isn't reachable.
+  async autoPairLast() {
+    if (!this.isSupported()) return null;
+    const saved = this._getRememberedDevice();
+    if (!saved) return null;
+    try {
+      await this._ensureTransport();
+      if (typeof this.transport.getKnownDevice !== 'function') {
+        this.log('warn', `Auto-pair unsupported on ${this.transport.name} transport`);
+        return null;
+      }
+      this.log('ok', `Auto-pairing saved device ${saved.name || saved.deviceId}…`);
+      const handle = await this.transport.getKnownDevice(saved);
+      return await this._bringUpSession(handle);
+    } catch (e) {
+      this.log('warn', `Auto-pair failed: ${e.message}. Tap Pair to reconnect.`);
+      return null;
+    }
+  }
+
+  forgetLastDevice() {
+    try { localStorage.removeItem('fmc-last-paired'); } catch {}
+    this.log('ok', 'Forgot saved pairing.');
+  }
+
+  _rememberDevice(handle) {
+    try {
+      localStorage.setItem('fmc-last-paired', JSON.stringify({
+        deviceId: handle.id || handle.deviceId,
+        name: handle.name || null,
+      }));
+    } catch {}
+  }
+
+  _getRememberedDevice() {
+    try {
+      const raw = localStorage.getItem('fmc-last-paired');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || !parsed.deviceId) return null;
+      return parsed;
+    } catch { return null; }
+  }
+
+  // Shared pair flow for fresh requestDevice() picks and auto-pair.
+  async _bringUpSession(handle) {
     const driver = selectDriver({ device: { name: handle.name } });
     this.log('ok', `Selected ${handle.name || handle.id}. Transport: ${this.transport.name}. Driver: ${driver.name}. Connecting GATT…`);
 
