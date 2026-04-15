@@ -1,0 +1,34 @@
+# MediaMTX config for Field Multi-Cam.
+# Minimal: RTMP ingest on :1935, HLS (LL-HLS) on :8888.
+# No auth — this server only listens on the tablet's local hotspot LAN
+# and is firewalled by Android from the outside world.
+
+logLevel: info
+logDestinations: [stdout]
+
+rtmp: yes
+rtmpAddress: :1935
+rtmpEncryption: "no"
+
+hls: yes
+hlsAddress: :8888
+hlsAlwaysRemux: yes
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+hlsSegmentMaxSize: 50M
+hlsAllowOrigin: "*"
+hlsEncryption: no
+
+api: no
+metrics: no
+pprof: no
+
+# Two fixed paths, one per camera. The cameras will be instructed via
+# BLE to push to rtmp://<tablet-ip>:1935/cam1 and /cam2.
+paths:
+  cam1:
+    source: publisher
+  cam2:
+    source: publisher
