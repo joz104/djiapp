@@ -17,6 +17,21 @@ export class VideoPane {
     this._retryTimer = null;
     this._retryCount = 0;
     this._maxRetries = 30; // ~60s at 2s intervals
+
+    // Click-to-play fallback. The UI redesign removed the native <video>
+    // controls bar so autoplay-blocked or paused-after-error panes had no
+    // visible way to recover. Tapping anywhere in the video cell retries
+    // play() directly.
+    videoEl.addEventListener('click', () => {
+      if (!videoEl.paused) return;
+      videoEl.play().catch((e) => {
+        // Only complain about non-abort errors — abort errors come from
+        // load() being called concurrently and are benign.
+        if (e && e.name !== 'AbortError') {
+          this.onLog('warn', `Pane ${this.paneId}: play failed (${e.message || e})`);
+        }
+      });
+    });
   }
 
   restoreLastUrl() {
@@ -69,18 +84,18 @@ export class VideoPane {
       this.hls.attachMedia(this.videoEl);
       this.hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!data.fatal) return;
-        // On fatal errors try to auto-recover; if we can't, destroy and
-        // re-create the hls instance from scratch after a backoff. This
-        // replaces the 'hit Load 3-4 times' manual recovery from the old
-        // UI.
+        // A fatal error from hls.js means its internal retry budget is
+        // already exhausted — startLoad() won't recover, it just sits
+        // in a dead state. The only thing that reliably works is a full
+        // destroy + recreate of the hls instance, which is what
+        // _scheduleReload() does (it calls back into load()).
         switch (data.type) {
           case Hls.ErrorTypes.NETWORK_ERROR:
-            this.onLog('warn', `Pane ${this.paneId}: HLS network error (${data.details}), retrying…`);
-            try { this.hls.startLoad(); return; } catch {}
+            this.onLog('warn', `Pane ${this.paneId}: HLS network error (${data.details}) — full reload…`);
             this._scheduleReload();
             break;
           case Hls.ErrorTypes.MEDIA_ERROR:
-            this.onLog('warn', `Pane ${this.paneId}: HLS media error (${data.details}), recovering…`);
+            this.onLog('warn', `Pane ${this.paneId}: HLS media error (${data.details}) — recovering…`);
             try { this.hls.recoverMediaError(); } catch { this._scheduleReload(); }
             break;
           default:
@@ -98,6 +113,10 @@ export class VideoPane {
 
     this.rememberUrl(trimmed);
     try { await this.videoEl.play(); } catch (e) {
+      // AbortError is the expected outcome when load() is called again
+      // before the previous play() has settled — either by our retry
+      // logic or by stop-preview. Silence it so the log isn't noisy.
+      if (e && e.name === 'AbortError') return;
       this.onLog('warn', `Pane ${this.paneId}: autoplay blocked (${e.message}). Tap the video to play.`);
     }
   }
