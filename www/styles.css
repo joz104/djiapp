@@ -405,6 +405,54 @@ body {
   outline: none;
   border-color: var(--muted);
 }
+
+/* Password input with inline Show/Hide toggle. */
+.input-with-toggle {
+  position: relative;
+  display: flex;
+}
+.input-with-toggle input {
+  flex: 1;
+  min-width: 0;
+  padding-right: 58px; /* leave room for the toggle button */
+  /* inherit .field input styles */
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  padding-top: 8px;
+  padding-bottom: 8px;
+  padding-left: 10px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+}
+.pw-toggle {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  cursor: pointer;
+  min-width: 48px;
+  height: 28px;
+}
+.pw-toggle:hover {
+  color: var(--fg);
+  border-color: var(--fg);
+}
+.pw-toggle[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 .preview-row {
   display: flex;
   align-items: center;

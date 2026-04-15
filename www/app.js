@@ -367,6 +367,18 @@ previewBr.value   = localStorage.getItem(PREVIEW_BR_KEY)   || previewBr.value;
 // still fine for <select> elements.
 previewSsid.addEventListener('input',  () => localStorage.setItem(PREVIEW_SSID_KEY, previewSsid.value));
 previewPass.addEventListener('input',  () => localStorage.setItem(PREVIEW_PASS_KEY, previewPass.value));
+
+// Show / Hide password toggle. Lets the user verify what's actually stored
+// in the field — catches typos hiding behind the password dots (the real
+// cause of the 'Kam8nga69!' vs 'Kaminga69!' debug session).
+const previewPassToggle = document.getElementById('preview-pass-toggle');
+previewPassToggle.addEventListener('click', () => {
+  const showing = previewPass.type === 'text';
+  previewPass.type = showing ? 'password' : 'text';
+  previewPassToggle.textContent = showing ? 'Show' : 'Hide';
+  previewPassToggle.setAttribute('aria-pressed', String(!showing));
+  previewPassToggle.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
+});
 previewRes.addEventListener('change',  () => localStorage.setItem(PREVIEW_RES_KEY, previewRes.value));
 previewFps.addEventListener('change',  () => localStorage.setItem(PREVIEW_FPS_KEY, previewFps.value));
 previewBr.addEventListener('change',   () => localStorage.setItem(PREVIEW_BR_KEY, previewBr.value));
