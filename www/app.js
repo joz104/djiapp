@@ -360,11 +360,15 @@ previewRes.value  = localStorage.getItem(PREVIEW_RES_KEY)  || previewRes.value;
 previewFps.value  = localStorage.getItem(PREVIEW_FPS_KEY)  || previewFps.value;
 previewBr.value   = localStorage.getItem(PREVIEW_BR_KEY)   || previewBr.value;
 
-previewSsid.addEventListener('change', () => localStorage.setItem(PREVIEW_SSID_KEY, previewSsid.value));
-previewPass.addEventListener('change', () => localStorage.setItem(PREVIEW_PASS_KEY, previewPass.value));
-previewRes.addEventListener('change', () => localStorage.setItem(PREVIEW_RES_KEY, previewRes.value));
-previewFps.addEventListener('change', () => localStorage.setItem(PREVIEW_FPS_KEY, previewFps.value));
-previewBr.addEventListener('change',  () => localStorage.setItem(PREVIEW_BR_KEY, previewBr.value));
+// Use `input` for text fields so the value persists on every keystroke —
+// `change` only fires on blur, and on Android the user often taps Start
+// Preview before the keyboard dismisses so change never runs. `change` is
+// still fine for <select> elements.
+previewSsid.addEventListener('input',  () => localStorage.setItem(PREVIEW_SSID_KEY, previewSsid.value));
+previewPass.addEventListener('input',  () => localStorage.setItem(PREVIEW_PASS_KEY, previewPass.value));
+previewRes.addEventListener('change',  () => localStorage.setItem(PREVIEW_RES_KEY, previewRes.value));
+previewFps.addEventListener('change',  () => localStorage.setItem(PREVIEW_FPS_KEY, previewFps.value));
+previewBr.addEventListener('change',   () => localStorage.setItem(PREVIEW_BR_KEY, previewBr.value));
 
 let previewRunning = false;
 

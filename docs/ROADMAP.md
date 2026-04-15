@@ -32,80 +32,204 @@ Phases, current state, and open blockers. The status log at the bottom is the ru
 - [x] Multi-protocol architecture — each `CameraSession` takes a driver; `selectDriver` chooses by device name with 0x55 as safe fallback
 - [ ] Test synced record on both cameras from the master button
 
-### Phase 4 — live preview pipeline via native Android app 🚧
-Decided 2026-04-14: pivot off pure-PWA and wrap the app in Capacitor so we can bundle
-an on-device RTMP server. Pure PWA can't open raw sockets. Work lives on the
-`v2-capacitor` branch; `main` stays as the working Action-3 PWA.
+### Phase 4 — live preview pipeline via native Android app ✅
+Decided 2026-04-14: pivot off pure-PWA and wrap the app in Capacitor so we can
+bundle an on-device RTMP server. Pure PWA can't open raw sockets. Work lives on
+the `v2-capacitor` branch; `main` stays as the working Action-3 PWA for
+protocol-layer dev iteration.
 
-**Architecture**
-- Capacitor wraps the existing PWA as an Android APK. Web UI unchanged.
-- Bluetooth via `@capacitor-community/bluetooth-le` (Android WebView still
-  doesn't ship Web Bluetooth in 2026 — confirmed, Chromium #1100993 open).
+**Architecture (as shipped)**
+- Capacitor wraps the existing PWA as an Android APK (`ca.zorychta.djiapp`,
+  Android 35 target).
+- Bluetooth via `@capacitor-community/bluetooth-le` v7.3.2 (pinned — v8+ uses
+  Kotlin 2.2 which AGP 8.7.2's R8 can't dex without metadata corruption).
   A `BleTransport` abstraction picks `webBluetoothTransport` in the browser
-  (for dev on PC) or `capacitorBleTransport` inside the APK. The 0x55 driver
-  and CRC layer don't change.
-- RTMP server: MediaMTX (Go binary, MIT, ~27 MB `linux_arm64`) bundled as
-  `android/app/src/main/jniLibs/arm64-v8a/libmediamtx.so` and exec'd from a
-  foreground service (standard "fake .so" workaround for Android Q+ exec ban).
-  Accepts two RTMP inputs on :1935, serves LL-HLS on :8888. Wrapped in a small
-  Kotlin Capacitor plugin with `start()`/`stop()`.
+  (for dev on PC) or `capacitorBleTransport` inside the APK at module load.
+  The 0x55 driver and CRC layer don't change.
+- RTMP server: MediaMTX v1.17.1 (Go binary, MIT, ~27 MB `linux_arm64`)
+  downloaded by the GitHub Actions workflow during the build and bundled as
+  `android/app/src/main/jniLibs/arm64-v8a/libmediamtx.so`. Extracted into
+  `nativeLibraryDir` at install time and exec'd from a foreground service
+  (standard "fake .so" workaround for Android Q+ exec-from-private-dir ban).
+- Kotlin Capacitor plugin `MediaMtx` (`MediaMtxPlugin.kt` + `MediaMtxService.kt`)
+  exposes `start()` / `stop()` / `status()` / `getLocalIps()`. The service is
+  a `connectedDevice` foreground service (NOT `mediaProjection` — that type
+  requires a real `MediaProjection` consent token on Android 14+).
 - Cameras join the tablet's mobile hotspot (no internet needed) via BLE
   `setupWifi`, then RTMP push via BLE `startStreaming` pointed at the
-  tablet's IP. Both opcodes are already in our constants from the node-osmo
-  port; just need wiring.
-- Live preview is for setup / framing only. Latency tolerance is loose.
+  tablet's IP (`getLocalIps()` picks the 192.168.x.x interface). Preview is
+  for setup / framing only; end-to-end latency ~4 seconds.
 
-**Sub-phases** (one per session, each leaves the app in a working state)
-- [x] **4.0 scaffold** — npm init, Capacitor + Android platform + BLE plugin
+**Sub-phases (all shipped)**
+- [x] **4.0 scaffold** — npm init, Capacitor 8 + Android platform + BLE plugin
       installed, PWA files moved into `www/`, `.gitignore` covering generated
       Android artifacts, GitHub Actions workflow at
       `.github/workflows/android-build.yml` that builds a debug APK on every
-      push to `v2-capacitor` (+ manual dispatch). APK available as a workflow
-      artifact, no local Android Studio required.
-- [ ] **4.1 BLE transport swap** — introduce a `BleTransport` interface with
-      two concrete implementations (`webBluetoothTransport`,
-      `capacitorBleTransport`). `CameraSession` constructor takes a transport.
-      Runtime selection via `typeof window.Capacitor !== 'undefined'`. Verify
-      pair + record + auto-reconnect + battery parse still work in: (a)
-      Chrome on PC from github-pages-style serving of `www/`, (b) APK
-      sideloaded to the user's Android phone.
-- [ ] **4.2 RTMP plugin** — download MediaMTX, bundle via `jniLibs/`, write a
-      Kotlin Capacitor plugin (`FieldCamRtmp`) with a foreground service
-      running the binary. Permissions: `FOREGROUND_SERVICE`,
-      `FOREGROUND_SERVICE_MEDIA_PROJECTION`, notification channel. Verify
-      `curl http://localhost:8888` from inside the app's WebView returns the
-      MediaMTX status page while the service is running.
-- [ ] **4.3 camera streaming wire-up** — implement `setupWifi(ssid, password)`
-      and `startStreaming(rtmpUrl)` messages in the 0x55 driver. UI: "Setup
-      Preview" button → prompts SSID/password (persisted to localStorage) →
-      fires BLE commands → existing video pane points at
-      `http://localhost:8888/cam1/index.m3u8`. Test with one camera, then
-      two.
-- [ ] **4.4 polish and ship** — hotspot detection + SSID auto-fill, error
-      states for "camera failed to join WiFi" and "RTMP server died",
-      foreground-service UX, sign a release APK and publish. Decide whether
-      `v2-capacitor` merges back into `main` or whether `main` stays PWA.
+      push to `v2-capacitor` (+ manual dispatch). APK published as a rolling
+      release on GitHub Releases at `tag=v2-latest` via
+      `softprops/action-gh-release@v2`. Commit `7f44904`.
+- [x] **4.1 BLE transport swap** — `www/ble-transport.js` with two transports.
+      `capacitorBleTransport` talks to `window.Capacitor.Plugins.BluetoothLe`
+      directly (no npm wrapper import), converting byte values as lowercase
+      hex strings to match the plugin's native bridge (NOT base64 — this cost
+      us a session of debugging when the plugin's Kotlin `ConversionKt.toDigit`
+      threw `Invalid Hexadecimal Character: V` on base64 data). Eagerly calls
+      `ble.initialize({ androidNeverForLocation: true })` on app load so the
+      Android 12+ permission prompts fire immediately. Commits `3d32a75`,
+      `d5bd952`.
+- [x] **4.2 RTMP plugin** — MediaMTX downloaded in CI, bundled via jniLibs.
+      Kotlin plugin + foreground service with `connectedDevice` type (NOT
+      `mediaProjection` — Android 14+ rejects that type without a real
+      projection token). `mediamtx.yml` config in assets copied to
+      `filesDir` on first start; RTMP :1935, LL-HLS :8888, two fixed paths
+      `cam1` and `cam2`, no API, no auth. Kotlin pinned to 1.9.25 to match
+      AGP 8.7.2's R8. Commits `d76bca3`, `a31aab8`.
+- [x] **4.3 camera streaming wire-up** — `dji55Driver.setupWifiFrame`,
+      `prepareStreamFrame`, `startStreamFrame`, `cleanupStreamFrame`. The full
+      state machine from node-osmo `processPairing → processCleaningUp →
+      processPreparingStream → processSettingUpWifi`. Timeouts bumped to 30-45s
+      because setupWifi takes ~30s while the camera scans + associates + DHCPs.
+      `startPreviewAll` fans out per-camera sequential steps in parallel
+      across cameras via `Promise.all`. UI: hotspot SSID/pass inputs persisted
+      to localStorage, "Start Preview" kicks the full chain, video panes
+      auto-load the HLS URLs. No Mimo anywhere. Commits `3516482`, `3bbd469`,
+      `98ef7d6`, `7552408`, `06ed50f`, `d0c5a36`, `2527d1b`.
 
-### Phase 5 — polish ❌
-- [ ] Connection state recovery (auto-reconnect on disconnect during a match)
-- [ ] Battery / storage display from parsed camera status push
-- [ ] Real PWA icons (currently solid-dark placeholders)
-- [ ] Haptic feedback on master record tap
-- [ ] Fail-safe indicator when only one camera responded
-- [ ] Review accessibility (high contrast OK, but screen reader labels?)
+**Confirmed working against Osmo Action 3 hardware** 2026-04-14: pair,
+record (start/stop with `CmdSet=0x02/CmdID=0x02`), battery display,
+auto-reconnect, Start Preview → camera joins hotspot → camera RTMP push →
+MediaMTX LL-HLS → WebView `<video>` renders, Stop Preview → cameras return
+to idle, Master Record resumes. **Simultaneous preview + record works** —
+the Action 3 accepts `Do Record` while in livestream mode, so the coach can
+use the preview as a confidence monitor during the match.
+
+### Phase 5 — UI overhaul, preview quality, stitched view ✅
+Post-MVP polish. The v22-era UI was a debug vertical stack of sections. Phase
+5 rebuilt it for a landscape tablet on a sideline in daylight, exposed the
+preview stream quality as user-selectable, and added a real stitched-preview
+view for the two-camera overlap-and-stitch-in-post workflow.
+
+- [x] **5.1 Cleanup + preview settings (cache v22, commit `763db60`)** —
+      removed the experimental Record opcode test panel from the UI (the
+      `DJIControl.testRecordFrame` method stays in `dji-control.js` for future
+      Action 4 probing). Added `<select>` controls for preview resolution
+      (480/720/1080p), fps (25/30), bitrate (1/2.5/5/8 Mbps), persisted to
+      `localStorage.fmc-preview-{res,fps,br}` and passed into
+      `startPreviewAll({resolution, fps, bitrateKbps})`.
+- [x] **5.2 UI redesign for landscape field use (cache v23, commit `d79d190`)**
+      — `<body>` is now a flex column with a slim topbar, flex-1 main video
+      grid, fixed-height record bar, and a thin log bar. The two `<video>`
+      elements get absolute-positioned chip overlays for BLE / battery /
+      record state on top of each pane. The Master Record button is a big
+      red pill at the bottom with a pulsing indicator and a running
+      `mm:ss` timer while recording. All setup (hotspot SSID/pass, preview
+      quality, paired-cameras list) lives in a right-side slide-in drawer
+      accessed via a `Setup` button in the topbar. The log panel collapses
+      to a tiny status line at the bottom that expands into a full overlay
+      modal on tap. The per-pane URL/Load inputs were removed — preview
+      auto-loads the HLS endpoints.
+- [x] **5.3 Stitched view toggle (folded into 5.2)** — the `View: Split` /
+      `View: Stitched` button in the topbar toggles
+      `<main class="grid" data-view="...">` and the CSS rules. In 5.2 this
+      was a CSS-only side-by-side layout (two `<video>` elements adjacent).
+- [x] **5.4 Canvas-compositing stitched preview (cache v26, commit `60f8904`)**
+      — replaces the CSS side-by-side with a real canvas 2D compositor.
+      `StitchRenderer` in `app.js` runs a `requestAnimationFrame` loop while
+      in stitched mode, reading frames from both `<video>` elements via
+      `drawImage` and compositing them into a single wide `<canvas>` using
+      a one-time calibration (horizontal FoV + angle between cameras).
+      Overlap region is feather-blended by default via an offscreen mask
+      canvas + `destination-in` composite with a linear gradient; a "hard
+      seam" blend mode toggle lets the user dial in calibration by watching
+      where the seam lands. NOT a real homographic stitch — straight lines
+      won't stay perfectly straight across the seam — but good enough for
+      framing. Calibration persisted to `fmc-stitch-{fov,angle,blend}`.
+
+**Critical bugfixes shipped in Phase 5 (from field logcat diagnosis)**
+- `[hidden]{display:none !important}` global override (cache v24, commit
+  `13b4450`) — `.log-modal { display: flex }` was winning on specificity
+  against the UA `[hidden]` rule, so the ✕ close button "didn't work."
+- HLS retry that actually retries (cache v25+v27, commits `210796d`,
+  `c65f1bb`) — `VideoPane.load` now passes `manifestLoadingMaxRetry: 20`
+  etc. to hls.js, and on fatal `NETWORK_ERROR` runs a full
+  destroy+recreate reload loop (not `startLoad()`, which does nothing
+  useful on a fatal state). Also added a click-to-play handler on the
+  `<video>` elements since the UI redesign dropped the native `controls`
+  attribute, and silenced benign `AbortError` from concurrent
+  load/play races.
+
+### Phase 6 — remaining polish / ship ❌
+- [ ] Hardware verification: confirm SD recording stays at the camera's
+      configured resolution (4K) while preview streams at 720p. Simplest
+      check is the camera's own on-screen REC indicator; or pull a clip
+      off the SD and ffprobe it.
+- [ ] Per-camera Y-offset slider for the stitched view, if field testing
+      shows tripod-height differences too big for feather blending to mask.
+- [ ] Decode the `target=0x208, type=0x3ee80` livestream telemetry push
+      (current hypothesis: byte 3 is a segment counter, bytes 6-7 are
+      bitrate kbps LE, byte 8 is some flag). A live bitrate chip would
+      help the coach notice if the RTMP connection degrades mid-match.
+- [ ] Signed release APK: generate a proper keystore, wire it into
+      `.github/workflows/android-build.yml` as a repo secret, publish a
+      signed APK (or AAB) alongside the debug build. Required before
+      Play Store internal testing or direct APK distribution to other
+      coaches.
+- [ ] Action 4 BLE probe: when hardware arrives, use the
+      `DJIControl.testRecordFrame` method (re-exposed behind a dev flag)
+      to capture first-notification bytes and determine if it speaks
+      0x55 or 0xAA. Fill in `dji0xaaDriver` if needed.
+- [ ] Real PWA icons (currently solid-dark placeholders).
+- [ ] Haptic feedback on master record tap (`navigator.vibrate(50)`).
+- [ ] Decide branch strategy: merge `v2-capacitor` into `main` as the
+      shipping branch, or keep both (main = PWA dev loop, v2-capacitor =
+      APK shipping).
 
 ## Open blockers (priority order)
 
-1. **Action 4 untested.** Don't know yet whether it speaks 0x55, 0xAA, or both, and whether the same record opcode (`0x0102 / 0x020240`) works there. May require a second frame builder + protocol selector per camera. The experimental record-test panel in the UI is kept so we can probe it when the hardware arrives.
+1. **Action 4 untested.** Hardware not yet received. Don't know whether it
+   speaks 0x55, 0xAA, or both, and whether the Action 3's record opcode
+   (`0x0102 / 0x020240`) works there. The `dji0xaaDriver` stub exists so we
+   can slot in a real driver when we capture the first notification bytes.
+   The `testRecordFrame` probe method stays in `dji-control.js` for this.
 
-2. **Camera goes silent after one pair attempt.** Once the Action 3 accepts a connection (even our rogue one), it stops advertising for a while. Workaround: close Chrome tab, power-cycle camera, retry. Could be fixed by a clean disconnect path (send a disconnect message, release GATT server cleanly). Low priority.
+2. **4K recording verification.** Empirical test pending: does the Osmo
+   Action 3 actually record to SD at the body-configured resolution (e.g.
+   4K 30) while it's simultaneously streaming RTMP at the preview resolution
+   (e.g. 720p), or does livestream mode downgrade the SD recording? User
+   to verify by watching the camera's own REC indicator or ffprobing a
+   clip pulled from the SD card.
 
-3. **Recording state tracking is command-local.** `session.recording` is only updated from successful start/stop commands. If the user hits the physical shutter on the camera, the UI state goes stale. The status push at `target=0x205` does NOT reflect recording state — confirmed by a 84s capture spanning a real record on/off where not a single byte changed. If we need true state we'd have to find a different status channel. Low priority.
+3. **Camera goes silent after one pair attempt.** Once the Action 3 accepts
+   a connection, it stops advertising for a while. Workaround: power-cycle
+   the camera to re-advertise. Could be fixed by a clean disconnect path
+   (explicit disconnect message before releasing the GATT server). Low
+   priority.
+
+4. **Recording state tracking is command-local.** `session.recording` is
+   only updated on successful start/stop commands. If the user hits the
+   physical shutter on the camera, the UI state goes stale. The status
+   push at `target=0x205` does NOT reflect recording state — confirmed by
+   an 84s capture spanning a real record on/off with no byte changes. If
+   we need true state we'd have to find a different status channel. The
+   new `target=0x208, type=0x3ee80` push that appears during livestream
+   mode (Phase 4.3) is a candidate but hasn't been decoded yet.
+
+5. **Hotspot must be 2.4 GHz.** The Action 3 BLE stack only scans for
+   2.4 GHz WiFi during `setupWifi` and fails silently after ~30s with
+   response payload `0x01 0xff`. Modern Android phones default their
+   mobile hotspot to 5 GHz or "auto" (which prefers 5 GHz). The UI hint
+   in the setup drawer says "2.4 GHz" but users will forget — worth
+   calling out on first-run or in a welcome screen.
 
 ## Bets I'm hedging
 
-- **If the 0x55 protocol truly has no SD record opcode**, the fallback is RTMP-livestream-as-recording: cameras stream to a local SRS server via WiFi, SRS records the streams to file and serves HLS back for live preview. This is bigger work but actually delivers the full use case (sync record + live preview + archived files). Keep it in mind while solving Phase 2.
-- **If the Action 3 and Action 4 speak different protocols**, a clean per-session protocol dispatcher is the right architecture rather than forcing one protocol everywhere. Plan for this before writing more code.
+- **If the Action 4 turns out to support 0x55 too** we're done — same
+  driver, same opcodes. If it only speaks 0xAA (rhoenschrat's protocol),
+  we need a second driver. The architecture supports either outcome
+  with zero changes to `CameraSession`.
+- **If the canvas stitcher isn't good enough visually** (Phase 5.4), the
+  next step is per-camera Y-offset + possibly a barrel dewarp shader.
+  We'd switch from canvas 2D to WebGL for that; not in scope yet.
 
 ## Status log
 
@@ -121,6 +245,110 @@ Append one entry per session. Keep each entry brief — what changed, what we le
 - Set up project documentation (CLAUDE.md, README, PROTOCOL, ROADMAP).
 - Commits: `init` → `Vendor hls.js` → `Use acceptAllDevices` → `Switch to 0x55 protocol`.
 - Next session: log the full byte exchange during a pair-code-accept flow, then start the SD record opcode hunt (lean toward sniffing Mimo on Android).
+
+### 2026-04-15 — Phase 5 polish: UI overhaul, preview settings, canvas stitched view
+- **Preview quality selects (v22, `763db60`)** — dropped the experimental Record
+  opcode test panel, added resolution / fps / bitrate dropdowns persisted to
+  localStorage and wired into `startPreviewAll({resolution,fps,bitrateKbps})`.
+  The param path already existed in `dji55Driver.startStreamFrame`; just
+  needed real values instead of undefined defaults.
+- **UI redesign (v23, `d79d190`)** — full restructure of `index.html` +
+  `styles.css` into a landscape-first flex column: slim topbar, flex-1 video
+  grid with overlay chips, big red Master Record pill at the bottom, right-side
+  setup drawer for hotspot creds + preview quality + paired cameras, collapsed
+  log bar that expands into a modal overlay on tap. Master Record button
+  now shows a running `mm:ss` timer via setInterval.
+- **Stitched view CSS + canvas**
+  - v23 shipped a CSS `data-view="stitched"` toggle that just placed the two
+    video elements edge-to-edge with a dashed seam.
+  - v26 (`60f8904`) replaced that with a real canvas 2D compositor:
+    `StitchRenderer` reads frames from both `<video>` elements via
+    `drawImage`, computes the overlap from
+    `(FoV − angleDeg) / FoV` of the source width, and blends with a feathered
+    alpha ramp or a hard seam. Not a real homographic stitch but good enough
+    for framing on a static tripod. Calibration persisted under
+    `fmc-stitch-{fov,angle,blend}`.
+- **Bugs caught and fixed live via adb logcat**
+  - Close ✕ on the log modal "didn't work" (v24, `13b4450`): class selector
+    `.log-modal { display: flex }` was winning on CSS specificity against
+    `[hidden]{display:none}`. Fix: global `[hidden]{display:none !important}`.
+  - Live preview "didn't play" (v25, `210796d`): hls.js's internal retry
+    budget doesn't cover the 10-30s window while MediaMTX waits for the
+    camera to start publishing; `VideoPane.load` now cranks
+    `manifestLoadingMaxRetry` etc. up to 20 and schedules a full
+    destroy+recreate reload on fatal errors.
+  - Live preview STILL didn't play (v27, `c65f1bb`): my network-error
+    handler called `hls.startLoad()` and returned, but `startLoad()` on a
+    fatal state doesn't recover — it sits dead forever. Fix: drop the
+    `startLoad()` fast-path, always schedule a full reload. Also added a
+    click-to-play handler on `<video>` since the UI redesign dropped the
+    native controls bar.
+- **Docs gap**: ROADMAP and CLAUDE.md drifted significantly during the long
+  Phase 4 + Phase 5 sessions because each commit was chasing a live bug.
+  This status log entry is the consolidation.
+- Next: verify v27 live preview on hardware, decide on signed-release
+  tooling, decode the `0x3ee80` livestream telemetry push.
+
+### 2026-04-14 (later, pt 4) — Phase 4 implementation: BLE transport swap, MediaMtx plugin, self-contained preview
+- **BLE transport swap (v13, `3d32a75`)** — added `www/ble-transport.js` with
+  two concrete transports. `capacitorBleTransport` talks to
+  `window.Capacitor.Plugins.BluetoothLe` directly (no npm wrapper import to
+  avoid needing a bundler). Chose v7.3.2 of `@capacitor-community/bluetooth-le`
+  pinned in `package.json` — v8+ is compiled with Kotlin 2.2 which AGP 8.7.2's
+  R8 can't dex without corrupting Kotlin metadata (got ~1900
+  "Unexpected error during rewriting of Kotlin metadata" D8 warnings on the
+  first attempt). Kept Kotlin 1.9.25 to match.
+- **Capacitor BLE bridge uses hex strings, not base64 (v13 hotfix, `d5bd952`)**
+  — first APK crashed immediately on the pair frame write with
+  `java.lang.IllegalArgumentException: Invalid Hexadecimal Character: V` in
+  `ConversionKt.toDigit`. The plugin's native bridge expects byte values as
+  lowercase hex strings, not base64. Wrote `uint8ToHex` / `hexToUint8` in
+  `ble-transport.js` and swapped the encoding.
+- **MediaMtx plugin (v13, `d76bca3`)** — Kotlin plugin + foreground service.
+  GHA workflow downloads MediaMTX v1.17.1 `linux_arm64`, drops it into
+  `android/app/src/main/jniLibs/arm64-v8a/libmediamtx.so`. The service exec's
+  the binary from `nativeLibraryDir`, pipes stdout/stderr into Logcat, and
+  shows a persistent `connectedDevice` foreground notification. Initially
+  used `mediaProjection` FGS type which Android 14+ rejects unless you hold
+  a real `MediaProjection` consent token; swapped to `connectedDevice`
+  (hotfix `a31aab8`) which only needs `BLUETOOTH_CONNECT` (we already have
+  it). `getLocalIps()` plugin method returns all non-loopback IPv4 addrs so
+  the UI can pick the tablet's hotspot IP.
+- **Self-contained live preview (v15, `3bbd469`)** — wired
+  `setupWifiFrame` / `startStreamFrame` / `cleanupStreamFrame` /
+  `prepareStreamFrame` in `dji55Driver` per node-osmo's
+  `processPairing → processCleaningUp → processPreparingStream →
+  processSettingUpWifi` state machine. Several payload bugs burned through
+  before the camera accepted things:
+  - Initially skipped `cleanupStreamFrame` and `prepareStreamFrame`; camera
+    silently ignored `setupWifi` because it was in the wrong state. Fixed
+    by walking the full state machine.
+  - `prepareStreamFrame` payload is `[0x1a]` (magic byte), not empty. An
+    empty payload returned response `0xda` (error) and subsequent commands
+    got dropped.
+  - 5s/15s timeouts were too short — the camera takes ~30s to associate
+    with the hotspot during `setupWifi`. Bumped all stream-state timeouts
+    to 30-45s. (`d0c5a36`)
+  - Critically: **Action 3 only supports 2.4 GHz WiFi**. On 5 GHz hotspot
+    (the Android default) the camera returns response `01 ff` after ~30s.
+    Worked once the user switched the hotspot band. (`2527d1b`)
+- **CI: GitHub Releases for APKs (`caae796`)** — modified the workflow to
+  create/update a rolling release at tag `v2-latest` with the APK attached,
+  so install-on-phone is a single tap from
+  https://github.com/joz104/djiapp/releases/tag/v2-latest instead of
+  unzipping a workflow artifact.
+- **Wireless adb setup** — for runtime debugging. `adb pair` + `adb connect`
+  over WiFi works cleanly from WSL (TCP only, no USB passthrough). Gotcha:
+  the pairing-code port closes the instant you navigate away from the
+  "Pair device with pairing code" screen on the phone; must paste the
+  `IP:port` + pin while the dialog is still visible.
+- **`adb logcat | grep FMC`** — `app.js`'s `log()` now mirrors to
+  `console.log`/`warn`/`error` tagged `[FMC:kind]` so Android pipes the
+  lines into Logcat under `Capacitor/Console`, making field debugging
+  grep-able instead of copy-paste from the UI panel.
+- **End-to-end confirmed on real hardware**: pair, record, Start Preview,
+  Stop Preview, simultaneous preview+record all working without Mimo.
+- Next: UI polish, preview quality selects, real stitched view (Phase 5).
 
 ### 2026-04-14 (later, pt 3) — Phase 4 pivot, Capacitor scaffold landed on v2-capacitor
 - Decided to wrap the app in Capacitor rather than defer Phase 4. Research confirmed: Android WebView still has no Web Bluetooth in 2026 (Chromium #1100993), so the PWA's BLE code must be ported onto `@capacitor-community/bluetooth-le` inside the wrap. The driver refactor from earlier today pays off here — only the transport layer needs to swap, not the protocol code.
