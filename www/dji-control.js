@@ -217,6 +217,17 @@ const RECORD_STOP_PAYLOAD  = new Uint8Array([0x00]);
 let   _recTxId = 0x9001;
 function nextRecTxId() { _recTxId = (_recTxId + 1) & 0xFFFF; return _recTxId; }
 
+// Camera Work Mode Set — DJI DUML CmdSet 0x02 / CmdID 0x10.
+// Payload byte 0: 0x00=TAKEPHOTO, 0x01=RECORD, 0x02=PLAYBACK, 0x03=TRANSCODE,
+// 0x04=TUNING, 0x05=SAVEPOWER, 0x06=DOWNLOAD, 0x07=NEW_PLAYBACK.
+// Source: o-gs/dji-firmware-tools dji-dumlv1-camera.lua Camera State Info
+// mode enum. We send this before every record-start so the camera flips
+// out of Photo mode if that's where it's sitting. Works even if the
+// camera is already in RECORD mode (returns success and is a no-op).
+const WORK_MODE_TARGET = 0x0102;
+const WORK_MODE_TYPE   = 0x100240;
+const WORK_MODE_RECORD_PAYLOAD = new Uint8Array([0x01]);
+
 // ---- Status push (camera -> remote, ~1 Hz) -----------------------------
 // Empirically observed 34-byte payload. Only offset 20 is decoded so far
 // (battery %). Other bytes vary across sessions but we haven't nailed them
@@ -301,6 +312,20 @@ const dji55Driver = {
       txId: nextRecTxId(),
       type: RECORD_TYPE,
       payload: action === 'start' ? RECORD_START_PAYLOAD : RECORD_STOP_PAYLOAD,
+      timeoutMs: 3000,
+    };
+  },
+
+  // Sent before recordFrame('start') so the camera flips into RECORD
+  // work mode (0x01). No-op if the camera is already in RECORD mode.
+  // Prevents the 'user had camera in Photo mode, Master Record didn't
+  // trigger video' failure path.
+  setWorkModeRecordFrame() {
+    return {
+      target: WORK_MODE_TARGET,
+      txId: nextRecTxId(),
+      type: WORK_MODE_TYPE,
+      payload: WORK_MODE_RECORD_PAYLOAD,
       timeoutMs: 3000,
     };
   },
@@ -507,6 +532,18 @@ export class DJIControl extends EventTarget {
     if (sessions.length === 0) throw new Error('No connected cameras');
     return Promise.all(sessions.map(async (s) => {
       try {
+        // On START, first force the camera into RECORD work mode in case
+        // the user left it in Photo mode on the body. No-op if already in
+        // video mode. We don't abort on failure here — some firmwares may
+        // not accept this opcode and we still want Do Record to fire.
+        if (action === 'start' && s.driver.setWorkModeRecordFrame) {
+          try {
+            await s.sendAndAwait(s.driver.setWorkModeRecordFrame());
+            this.log('ok', `${s.label()} → work mode → RECORD`);
+          } catch (e) {
+            this.log('warn', `${s.label()}: set-work-mode failed (${e.message}); trying record anyway`);
+          }
+        }
         const resp = await s.sendAndAwait(s.driver.recordFrame(action));
         if (!s.driver.isRecordOk(resp)) {
           const status = resp.payload[0];
