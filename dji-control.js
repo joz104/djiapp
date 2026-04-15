@@ -1,14 +1,21 @@
 // DJIControl — Web Bluetooth control for DJI Osmo Action cameras.
 //
-// Implements the "node-osmo / Moblin RTMP-livestream" protocol (SOF 0x55).
-// This is the protocol that DJI's own Mimo app uses to configure RTMP
-// livestreaming, and (based on empirical BLE capture from an Osmo Action 3)
-// is the ONLY protocol the Action 3 speaks on characteristics FFF3/FFF4.
+// Multi-protocol architecture: DJIControl owns a Map of CameraSession
+// instances, each of which delegates every byte of its I/O to a
+// ProtocolDriver object. Today we ship:
+//   - dji55Driver — the node-osmo / Moblin 0x55 DUML-over-BLE protocol,
+//                   empirically confirmed on the Osmo Action 3 (pair +
+//                   record start/stop both working end-to-end).
+//   - dji0xaaDriver — stub for the DJI-SDK / rhoenschrat 0xAA protocol.
+//                     All methods throw until someone captures Action 4
+//                     frames and fills it in.
+// New protocols = new driver object + entry in DRIVERS. CameraSession
+// should not need to change.
 //
 // Ported from:
 //   - datagutt/node-osmo (TypeScript, MIT) — frame layout, pair token, state machine
 //
-// FRAME LAYOUT (all multibyte little-endian):
+// 0x55 FRAME LAYOUT (all multibyte little-endian):
 //   off  size  field
 //    0    1    SOF = 0x55
 //    1    1    totalLen  (including CRCs)
@@ -175,6 +182,106 @@ function buildPairPayload() {
   return out;
 }
 
+// ---- Protocol drivers ---------------------------------------------------
+// A driver bundles the frame codec + well-known message descriptors + push
+// decoder for ONE protocol dialect. CameraSession delegates to `this.driver`
+// for every byte it touches. Adding a new protocol = adding a new driver
+// object and teaching selectDriver() to recognize it.
+//
+// Interface:
+//   name: string
+//   sof: number                                (start-of-frame sentinel)
+//   minFrameLen: number                        (shortest legal frame)
+//   detect({ device }): boolean                (claim this camera?)
+//   buildFrame({target,txId,type,payload}): Uint8Array
+//   parseFrame(Uint8Array): { ok, target, txId, type, payload, total, reason? }
+//   pairFrame(): { target, txId, type, payload, timeoutMs }
+//   recordFrame('start'|'stop'): { target, txId, type, payload, timeoutMs }
+//   decodePush(frame): { battery?, recording?, ... } | null
+//   isRecordOk(respFrame): boolean
+
+const dji55Driver = {
+  name: 'dji-0x55',
+  sof: 0x55,
+  minFrameLen: 13,
+
+  detect({ device }) {
+    const n = (device?.name || '').toLowerCase();
+    return /action\s*3|oa3/.test(n);
+  },
+
+  buildFrame({ target, txId, type, payload }) {
+    return buildFrame(target, txId, type, payload);
+  },
+
+  parseFrame,
+
+  pairFrame() {
+    return {
+      target: PAIR_TARGET,
+      txId: PAIR_TXID,
+      type: PAIR_TYPE,
+      payload: buildPairPayload(),
+      timeoutMs: 20000,
+    };
+  },
+
+  recordFrame(action) {
+    return {
+      target: RECORD_TARGET,
+      txId: nextRecTxId(),
+      type: RECORD_TYPE,
+      payload: action === 'start' ? RECORD_START_PAYLOAD : RECORD_STOP_PAYLOAD,
+      timeoutMs: 3000,
+    };
+  },
+
+  decodePush(f) {
+    if (f.target === STATUS_PUSH_TARGET && f.type === STATUS_PUSH_TYPE) {
+      return parseStatusPush(f.payload);
+    }
+    return null;
+  },
+
+  isRecordOk(resp) {
+    return resp.payload.length >= 1 && resp.payload[0] === 0x00;
+  },
+};
+
+// Placeholder for the rhoenschrat / DJI-SDK 0xAA protocol. The Action 4 may
+// or may not speak this — unknown until hardware arrives. Every method
+// throws until the user captures real bytes and we fill it in.
+const NOT_IMPL = () => { throw new Error('0xAA driver not implemented; waiting on Action 4 capture'); };
+const dji0xaaDriver = {
+  name: 'dji-0xaa',
+  sof: 0xAA,
+  minFrameLen: 13, // placeholder; actual value TBD from capture
+
+  detect({ device }) {
+    const n = (device?.name || '').toLowerCase();
+    return /action\s*4|oa4/.test(n);
+  },
+
+  buildFrame: NOT_IMPL,
+  parseFrame: NOT_IMPL,
+  pairFrame: NOT_IMPL,
+  recordFrame: NOT_IMPL,
+  decodePush() { return null; },
+  isRecordOk() { return false; },
+};
+
+const DRIVERS = [dji55Driver, dji0xaaDriver];
+
+function selectDriver({ device }) {
+  for (const d of DRIVERS) {
+    if (d.detect({ device })) return d;
+  }
+  // Safe default: the Action 3 path is known-working, so an unknown camera
+  // gets 0x55 by default. If handshake fails with a CRC error we'll know to
+  // try 0xAA instead once it's implemented.
+  return dji55Driver;
+}
+
 // ---- DJIControl class ---------------------------------------------------
 export class DJIControl extends EventTarget {
   constructor() {
@@ -199,9 +306,10 @@ export class DJIControl extends EventTarget {
       optionalServices: [DJI_SERVICE, 'battery_service'],
     });
 
-    this.log('ok', `Selected ${device.name || device.id}. Connecting GATT…`);
+    const driver = selectDriver({ device });
+    this.log('ok', `Selected ${device.name || device.id}. Driver: ${driver.name}. Connecting GATT…`);
 
-    const session = new CameraSession(device, this);
+    const session = new CameraSession(device, this, driver);
     this.pairedCameras.set(device.id, session);
     this._emitStatus(session);
 
@@ -243,20 +351,12 @@ export class DJIControl extends EventTarget {
   async _recordFanOut(action) {
     const sessions = Array.from(this.pairedCameras.values()).filter(s => s.connected);
     if (sessions.length === 0) throw new Error('No connected cameras');
-    const payload = action === 'start' ? RECORD_START_PAYLOAD : RECORD_STOP_PAYLOAD;
     return Promise.all(sessions.map(async (s) => {
-      const txId = nextRecTxId();
       try {
-        const resp = await s.sendAndAwait({
-          target: RECORD_TARGET,
-          txId,
-          type: RECORD_TYPE,
-          payload,
-          timeoutMs: 3000,
-        });
-        const status = resp.payload[0];
-        if (status !== 0x00) {
-          throw new Error(`camera returned error 0x${status.toString(16)}`);
+        const resp = await s.sendAndAwait(s.driver.recordFrame(action));
+        if (!s.driver.isRecordOk(resp)) {
+          const status = resp.payload[0];
+          throw new Error(`camera returned error 0x${status?.toString(16)}`);
         }
         s.recording = (action === 'start');
         this._emitStatus(s);
@@ -296,9 +396,10 @@ class CameraSession {
   // without the coach having to notice, so there's no retry cap.
   static BACKOFF_MS = [0, 2000, 5000, 15000, 30000, 60000];
 
-  constructor(device, control) {
+  constructor(device, control, driver) {
     this.device = device;
     this.control = control;
+    this.driver = driver;
     this.server = null;
     this.service = null;
     this.writeChar = null;
@@ -417,15 +518,17 @@ class CameraSession {
     merged.set(incoming, this.rxBuffer.length);
     this.rxBuffer = merged;
 
-    while (this.rxBuffer.length >= 13) {
-      if (this.rxBuffer[0] !== 0x55) {
-        const sof = this.rxBuffer.indexOf(0x55);
-        if (sof < 0) { this.rxBuffer = new Uint8Array(0); return; }
-        this.rxBuffer = this.rxBuffer.slice(sof);
-        if (this.rxBuffer.length < 13) return;
+    const sof = this.driver.sof;
+    const minLen = this.driver.minFrameLen;
+    while (this.rxBuffer.length >= minLen) {
+      if (this.rxBuffer[0] !== sof) {
+        const i = this.rxBuffer.indexOf(sof);
+        if (i < 0) { this.rxBuffer = new Uint8Array(0); return; }
+        this.rxBuffer = this.rxBuffer.slice(i);
+        if (this.rxBuffer.length < minLen) return;
       }
       const totalLen = this.rxBuffer[1];
-      if (totalLen < 13) {
+      if (totalLen < minLen) {
         // bogus, skip this byte
         this.rxBuffer = this.rxBuffer.slice(1);
         continue;
@@ -433,7 +536,7 @@ class CameraSession {
       if (this.rxBuffer.length < totalLen) return; // wait for more
       const frame = this.rxBuffer.slice(0, totalLen);
       this.rxBuffer = this.rxBuffer.slice(totalLen);
-      const parsed = parseFrame(frame);
+      const parsed = this.driver.parseFrame(frame);
       if (!parsed.ok) {
         this.control.log('warn', `frame parse error: ${parsed.reason} raw=${hex(frame)}`);
         continue;
@@ -443,15 +546,16 @@ class CameraSession {
   }
 
   dispatchFrame(f) {
-    // Camera status push (~1 Hz) — handled quietly so the log doesn't flood.
-    if (f.target === STATUS_PUSH_TARGET && f.type === STATUS_PUSH_TYPE) {
-      const s = parseStatusPush(f.payload);
-      if (typeof s.battery === 'number' && s.battery !== this.battery) {
-        this.battery = s.battery;
-        this.control.log('ok', `${this.label()} batt=${s.battery}%`);
+    // Let the driver decode any status push it recognizes. Return null means
+    // "not a push, fall through to normal reply routing".
+    const push = this.driver.decodePush(f);
+    if (push) {
+      if (typeof push.battery === 'number' && push.battery !== this.battery) {
+        this.battery = push.battery;
+        this.control.log('ok', `${this.label()} batt=${push.battery}%`);
         this.control._emitStatus(this);
       }
-      return;
+      return; // suppress raw log — pushes arrive ~1 Hz
     }
 
     this.control.log('ok', `⇐ target=0x${f.target.toString(16)} txId=0x${f.txId.toString(16)} type=0x${f.type.toString(16)} payload=${hex(f.payload)}`);
@@ -464,7 +568,7 @@ class CameraSession {
   }
 
   async sendAndAwait({ target, txId, type, payload, timeoutMs = 5000 }) {
-    const frame = buildFrame(target, txId, type, payload);
+    const frame = this.driver.buildFrame({ target, txId, type, payload });
     this.control.log('ok', `⇒ target=0x${target.toString(16)} txId=0x${txId.toString(16)} type=0x${type.toString(16)} payload=${hex(payload)} [${frame.length}B]`);
 
     const promise = new Promise((resolve, reject) => {
@@ -496,20 +600,11 @@ class CameraSession {
   }
 
   async handshake() {
-    // node-osmo sends a single pair message and waits for the camera's response
-    // with the same txId. The payload of the response tells us whether we're
-    // newly paired or already paired.
-    const payload = buildPairPayload();
-    const resp = await this.sendAndAwait({
-      target: PAIR_TARGET,
-      txId: PAIR_TXID,
-      type: PAIR_TYPE,
-      payload,
-      timeoutMs: 20000,
-    });
+    // Delegated to the driver so the Action 4 can supply a different pair
+    // message shape if needed. For 0x55, ANY response on the correct txId
+    // is a success (payload [0x00, 0x01] = "already paired").
+    const resp = await this.sendAndAwait(this.driver.pairFrame());
     this.control.log('ok', `Pair response: ${hex(resp.payload)}`);
-    // payload of [0x00, 0x01] means "already paired". Other values = new pair accepted.
-    // For our purposes, ANY response on the correct txId is a success.
   }
 }
 

@@ -91,8 +91,11 @@ See `docs/ROADMAP.md` for the full picture. As of last session:
 - ✅ Pair handshake works. Camera replies `0x00 0x01` immediately on txId 0x8092 (no PIN-confirmation follow-up frame observed — likely auto-accept once previously paired).
 - ✅ **Record-to-SD opcode confirmed on Action 3.** `target=0x0102, type=0x020240, payload=[0x01]` starts recording; `[0x00]` stops. Camera replies on `target=0x0201, type=0x0202c0` with payload `0x00` on success (error codes seen: `0xe0` wrong target, `0xe3` bad arg). Opcode source: DJI DUML CmdSet=0x02 / CmdID=0x02 "Do Record" from xaionaro-go/djictl + o-gs/dji-firmware-tools camera dissector.
 - ✅ `startRecordAll` / `stopRecordAll` wired. Master Record button functional against the Action 3.
+- ✅ Battery % parsed from status push (offset 20) and shown on Cam chips.
+- ✅ Auto-reconnect on BLE drop with backoff `[0, 2, 5, 15, 30, 60]s`, last value repeats. Recording state is preserved across reconnect.
+- ✅ **Multi-protocol driver architecture.** `CameraSession` now delegates every byte to `this.driver`. `dji55Driver` handles Action 3; `dji0xaaDriver` is a stub for the Action 4. `selectDriver({device})` picks based on `device.name` regex and falls back to 0x55 as the safe default.
 - 🚧 **Status-push channel does NOT reflect recording state** — `target=0x205, type=0x20d00` is a slow battery/temp heartbeat only. Don't rely on it to confirm record state; use the command's own response payload instead.
-- ❌ Action 4 — not yet received, may speak a different protocol dialect. The experimental test panel in the UI is kept around so we can re-probe target/payload when it arrives.
+- ❌ Action 4 — not yet received. The experimental Record opcode test panel in the UI is kept around so we can re-probe target/payload when it arrives.
 
 ## Reference repos (in priority order)
 

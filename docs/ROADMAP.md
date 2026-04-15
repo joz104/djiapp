@@ -25,11 +25,11 @@ Phases, current state, and open blockers. The status log at the bottom is the ru
 - [ ] Measure end-to-end latency between the two cameras when both are triggered (needs Action 4)
 - [ ] Track recording state robustly — we currently flip `session.recording` on command success, but if the user presses the camera's physical shutter our state goes stale. Low priority until it matters.
 
-### Phase 3 — second camera (Action 4) ❌
+### Phase 3 — second camera (Action 4) 🚧
 - [ ] Receive Action 4 hardware
 - [ ] Capture raw BLE notification bytes to determine which protocol it speaks (0x55 vs 0xAA)
-- [ ] If it speaks 0xAA, port rhoenschrat's frame builder as a second implementation
-- [ ] Multi-protocol architecture — each `CameraSession` knows which protocol its camera speaks
+- [ ] If it speaks 0xAA, fill in `dji0xaaDriver` with rhoenschrat's frame layout
+- [x] Multi-protocol architecture — each `CameraSession` takes a driver; `selectDriver` chooses by device name with 0x55 as safe fallback
 - [ ] Test synced record on both cameras from the master button
 
 ### Phase 4 — live preview pipeline ❌
@@ -74,6 +74,13 @@ Append one entry per session. Keep each entry brief — what changed, what we le
 - Set up project documentation (CLAUDE.md, README, PROTOCOL, ROADMAP).
 - Commits: `init` → `Vendor hls.js` → `Use acceptAllDevices` → `Switch to 0x55 protocol`.
 - Next session: log the full byte exchange during a pair-code-accept flow, then start the SD record opcode hunt (lean toward sniffing Mimo on Android).
+
+### 2026-04-14 (later, pt 2) — Field-ready polish + multi-protocol refactor
+- Parsed battery % from the status-push channel (offset 20) — now surfaces on each Cam chip and updates as the pack drains. Suppressed the 1 Hz raw log for status pushes to keep the log readable.
+- Implemented auto-reconnect on unexpected GATT disconnect: backoff `[0, 2, 5, 15, 30, 60]s` (last value repeats forever). Manual disconnect short-circuits via `session.intentionalDisconnect`. `session.recording` is preserved across drops since the camera keeps recording to SD across BLE loss.
+- Refactored the protocol layer into a driver-object interface. `dji55Driver` wraps today's 0x55 codec and message catalog; `dji0xaaDriver` is a stub that throws until an Action 4 is on hand. `CameraSession` constructor now takes a driver and delegates every byte (buildFrame, parseFrame, sof, minFrameLen, decodePush, pairFrame, recordFrame, isRecordOk) to it. `selectDriver({device})` picks by `device.name` regex with 0x55 as the safe fallback.
+- Commits: `b073770` (v10 battery) → `0bc9665` (v11 reconnect) → next: v12 driver refactor.
+- Next session: Phase 4 (live preview RTMP pipeline) — needs an infrastructure decision before coding.
 
 ### 2026-04-14 (later) — Record opcode solved for Action 3
 - Ruled out the status-push channel (`target=0x205, type=0x20d00`) as a record-state signal — 84s of captures across a real physical-button record on/off showed not a single byte change related to recording. It's a slow battery/temp heartbeat only.
