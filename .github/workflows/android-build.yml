@@ -5,6 +5,9 @@ on:
     branches: [v2-capacitor]
   workflow_dispatch: {}
 
+permissions:
+  contents: write   # softprops/action-gh-release needs this to create/update the v2-latest release
+
 jobs:
   build:
     runs-on: ubuntu-latest
