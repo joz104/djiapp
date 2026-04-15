@@ -131,7 +131,42 @@ export const capacitorBleTransport = {
   async initialize() {
     const ble = capPlugin();
     if (!ble) throw new Error('Capacitor BluetoothLe plugin not available (are you inside the APK?)');
-    await ble.initialize({ androidNeverForLocation: true });
+
+    // Plugin init. On Android 12+ this triggers the runtime BLUETOOTH_SCAN /
+    // BLUETOOTH_CONNECT permission prompts. neverForLocation avoids the
+    // location permission nag that older Androids forced on BLE scanning.
+    // The plugin throws if the user denies.
+    try {
+      await ble.initialize({ androidNeverForLocation: true });
+    } catch (e) {
+      throw new Error(`Bluetooth initialize failed: ${e.message || e}. Check app permissions.`);
+    }
+
+    // Make sure the Bluetooth radio is actually on. requestEnable() pops the
+    // system toggle dialog so the user can flip BT on without leaving the app.
+    let enabled;
+    try {
+      const r = await ble.isEnabled();
+      enabled = !!(r && r.value);
+    } catch {
+      enabled = true; // plugin may not expose isEnabled on all versions — assume ok
+    }
+    if (!enabled) {
+      try {
+        await ble.requestEnable();
+      } catch {
+        throw new Error('Bluetooth is off. Turn it on in Settings and try again.');
+      }
+      // Re-check after user interaction.
+      try {
+        const r2 = await ble.isEnabled();
+        if (!(r2 && r2.value)) {
+          throw new Error('Bluetooth is still off.');
+        }
+      } catch (e) {
+        throw new Error(e.message || 'Bluetooth could not be enabled.');
+      }
+    }
   },
 
   async requestDevice({ optionalServices }) {

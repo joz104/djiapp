@@ -18,9 +18,25 @@ function log(kind, msg) {
 
 const dji = new DJIControl();
 if (!dji.isSupported()) {
-  log('err', 'Web Bluetooth unavailable. Use Chrome on Android over HTTPS or http://localhost.');
+  log('err', 'Bluetooth unavailable. Use the Android APK build, or Chrome on desktop over HTTPS/localhost.');
 }
 dji.addEventListener('log', (ev) => log(ev.detail.kind, ev.detail.msg));
+
+// Eagerly initialize the BLE transport so the Android runtime permission
+// prompts (BLUETOOTH_SCAN, BLUETOOTH_CONNECT) fire on first launch instead
+// of when the user taps Pair. Also pops the "enable Bluetooth" system
+// dialog if the radio is off. Failures are logged but non-fatal — the Pair
+// button will retry init on click.
+(async () => {
+  if (!dji.isSupported()) return;
+  log('ok', `BLE transport: ${dji.transport.name}`);
+  try {
+    await dji._ensureTransport();
+    log('ok', 'Bluetooth ready.');
+  } catch (e) {
+    log('warn', `Bluetooth not ready yet: ${e.message}. Tap Pair to grant permissions.`);
+  }
+})();
 
 const pane1 = new VideoPane(document.getElementById('video1'), 1);
 const pane2 = new VideoPane(document.getElementById('video2'), 2);
