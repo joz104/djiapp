@@ -163,27 +163,11 @@
       <ul id="paired-list"></ul>
     </section>
 
-    <!-- Always visible. Used to find the Osmo Action 3 camera mode-switch
-         opcode by brute-force probing. Remove once we know the winning
-         combination. -->
-    <section class="dev-probe" id="dev-probe-panel">
-      <h3>Mode Switch Probes (dev)</h3>
-      <p class="hint">Put the camera in <strong>Photo mode</strong>. Tap each button and watch the camera screen. Whichever flips it to Video mode is the winning opcode. Responses appear in the log.</p>
-      <div class="dev-probe-row">
-        <button class="md-btn md-btn-tonal" data-probe data-target="0x0102" data-type="0x100240" data-payload="01">1: 0102/100240/01</button>
-        <button class="md-btn md-btn-tonal" data-probe data-target="0x0802" data-type="0x100240" data-payload="01">2: 0802/100240/01</button>
-        <button class="md-btn md-btn-tonal" data-probe data-target="0x0202" data-type="0x100240" data-payload="01">3: 0202/100240/01</button>
-        <button class="md-btn md-btn-tonal" data-probe data-target="0x0102" data-type="0x6c0240" data-payload="01">4: 0102/6c0240/01</button>
-        <button class="md-btn md-btn-tonal" data-probe data-target="0x0802" data-type="0x6c0240" data-payload="01">5: 0802/6c0240/01</button>
-        <button class="md-btn md-btn-tonal" data-probe data-target="0x0102" data-type="0x6a0240" data-payload="00">6: 0102/6a0240/00</button>
-        <button class="md-btn md-btn-tonal" data-probe data-target="0x0102" data-type="0x170240" data-payload="01">7: 0102/170240/01</button>
-        <button class="md-btn md-btn-tonal" data-probe data-target="0x0102" data-type="0x110240" data-payload="01">8: 0102/110240/01</button>
-        <button class="md-btn md-btn-tonal" data-probe data-target="0x0102" data-type="0x100240" data-payload="0100">9: 0102/100240/01 00</button>
-        <button class="md-btn md-btn-tonal" data-probe data-target="0x0102" data-type="0x100240" data-payload="">10: 0102/100240/(empty)</button>
-        <button class="md-btn md-btn-tonal" data-probe data-target="0x0102" data-type="0x100240" data-payload="0001">11: 0102/100240/00 01</button>
-        <button class="md-btn md-btn-tonal" data-probe data-target="0x0102" data-type="0x080240" data-payload="01">12: 0102/080240/01</button>
-      </div>
-    </section>
+    <!-- Mode Switch Probes removed — HCI sniff of DJI Mimo confirmed the
+         mode-switch command goes over WiFi, not BLE. The camera's BLE
+         channel only handles pair, stream setup, and record start/stop.
+         DJIControl.testRecordFrame() stays in dji-control.js for future
+         Action 4 probing if needed. -->
   </aside>
 
   <!-- ========== LOG MODAL (expanded on tap) ========== -->

@@ -588,18 +588,12 @@ export class DJIControl extends EventTarget {
     if (sessions.length === 0) throw new Error('No connected cameras');
     return Promise.all(sessions.map(async (s) => {
       try {
-        // On START, first force the camera into RECORD work mode in case
-        // the user left it in Photo mode on the body. No-op if already in
-        // video mode. We don't abort on failure here — some firmwares may
-        // not accept this opcode and we still want Do Record to fire.
-        if (action === 'start' && s.driver.setWorkModeRecordFrame) {
-          try {
-            await s.sendAndAwait(s.driver.setWorkModeRecordFrame());
-            this.log('ok', `${s.label()} → work mode → RECORD`);
-          } catch (e) {
-            this.log('warn', `${s.label()}: set-work-mode failed (${e.message}); trying record anyway`);
-          }
-        }
+        // NOTE: We tried auto-switching the camera from Photo → Video mode
+        // via BLE before record. HCI sniff of DJI Mimo confirmed mode
+        // switching goes over WiFi, not BLE. The camera's BLE channel
+        // doesn't accept work-mode commands at all. If the camera is in
+        // Photo mode, Do Record returns 0xdf and the error message tells
+        // the user to switch manually on the camera body.
         const resp = await s.sendAndAwait(s.driver.recordFrame(action));
         if (!s.driver.isRecordOk(resp)) {
           const status = resp.payload[0];
