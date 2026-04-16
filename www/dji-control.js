@@ -77,6 +77,122 @@ function djiCrc16(bytes) {
   return crc;
 }
 
+// ---- 0xAA protocol CRCs (DJI R-SDK, used by Action 4+) ------------------
+// CRC16-MODBUS: poly 0x8005, init 0xFFFF, reflected
+const CRC16M_TABLE = (() => {
+  const t = new Uint16Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let j = 0; j < 8; j++) c = (c & 1) ? ((c >>> 1) ^ 0xA001) : (c >>> 1);
+    t[i] = c;
+  }
+  return t;
+})();
+
+function crc16modbus(bytes) {
+  let crc = 0xFFFF;
+  for (let i = 0; i < bytes.length; i++) {
+    crc = (CRC16M_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8)) & 0xFFFF;
+  }
+  return crc;
+}
+
+// CRC32: poly 0x04C11DB7, init 0xFFFFFFFF, reflected, final XOR 0xFFFFFFFF
+const CRC32_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let j = 0; j < 8; j++) c = (c & 1) ? ((c >>> 1) ^ 0xEDB88320) : (c >>> 1);
+    t[i] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(bytes) {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) {
+    crc = (CRC32_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8)) >>> 0;
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+// ---- 0xAA frame builder/parser ------------------------------------------
+// Frame layout (R-SDK):
+//   off  size  field
+//    0    1    SOF = 0xAA
+//    1    2    ver(6b)|length(10b), LE
+//    3    1    CmdType  (bit5=isResponse, bits[4:0]=ack mode)
+//    4    1    ENC (0x00 = none)
+//    5    3    reserved (zeros)
+//    8    2    SEQ (LE)
+//   10    2    CRC16-MODBUS(bytes[0..9])
+//   12    1    CmdSet
+//   13    1    CmdID
+//   14    N    data payload
+//  14+N   4    CRC32(bytes[0..13+N])
+
+let _aaSeq = 1;
+function nextAASeq() { _aaSeq = (_aaSeq + 1) & 0xFFFF; return _aaSeq; }
+
+function buildAAFrame(seq, cmdSet, cmdId, payload) {
+  const totalLen = 14 + payload.length + 4;
+  const buf = new Uint8Array(totalLen);
+  buf[0] = 0xAA;
+  const verLen = (1 << 10) | (totalLen & 0x3FF);
+  buf[1] = verLen & 0xFF;
+  buf[2] = (verLen >> 8) & 0xFF;
+  buf[3] = 0x01; // command, response optional
+  buf[4] = 0x00; // no encryption
+  buf[8] = seq & 0xFF;
+  buf[9] = (seq >> 8) & 0xFF;
+  const c16 = crc16modbus(buf.subarray(0, 10));
+  buf[10] = c16 & 0xFF;
+  buf[11] = (c16 >> 8) & 0xFF;
+  buf[12] = cmdSet;
+  buf[13] = cmdId;
+  if (payload.length > 0) buf.set(payload, 14);
+  const c32 = crc32(buf.subarray(0, totalLen - 4));
+  buf[totalLen - 4] = c32 & 0xFF;
+  buf[totalLen - 3] = (c32 >> 8) & 0xFF;
+  buf[totalLen - 2] = (c32 >> 16) & 0xFF;
+  buf[totalLen - 1] = (c32 >> 24) & 0xFF;
+  return buf;
+}
+
+function parseAAFrame(bytes) {
+  if (bytes.length < 16) return { ok: false, reason: 'too short for 0xAA' };
+  if (bytes[0] !== 0xAA) return { ok: false, reason: `bad SOF 0x${bytes[0].toString(16)}` };
+  const verLen = bytes[1] | (bytes[2] << 8);
+  const totalLen = verLen & 0x3FF;
+  if (totalLen < 16 || bytes.length < totalLen) return { ok: false, reason: `need ${totalLen}, have ${bytes.length}` };
+  const headerCrc = bytes[10] | (bytes[11] << 8);
+  if (headerCrc !== crc16modbus(bytes.subarray(0, 10))) return { ok: false, reason: 'header crc16 mismatch' };
+  const frameCrc = (bytes[totalLen - 4] | (bytes[totalLen - 3] << 8) |
+    (bytes[totalLen - 2] << 16) | ((bytes[totalLen - 1] << 24) >>> 0)) >>> 0;
+  if (frameCrc !== crc32(bytes.subarray(0, totalLen - 4))) return { ok: false, reason: 'body crc32 mismatch' };
+  return {
+    ok: true,
+    seq: bytes[8] | (bytes[9] << 8),
+    cmdSet: bytes[12],
+    cmdId: bytes[13],
+    isResponse: !!(bytes[3] & 0x20),
+    payload: bytes.subarray(14, totalLen - 4),
+    total: totalLen,
+  };
+}
+
+// 0xAA record command: CmdSet=0x1D, CmdID=0x03
+// Payload: device_id(4B LE) + record_ctrl(1B) + reserved(4B)
+const AA_REC_CMDSET = 0x1D;
+const AA_REC_CMDID  = 0x03;
+
+function buildAARecordPayload(start) {
+  const buf = new Uint8Array(9);
+  buf[0] = 0x33; buf[1] = 0xFF; // device_id = 0xFF33 LE
+  buf[4] = start ? 0x00 : 0x01; // 0x00 = start, 0x01 = stop
+  return buf;
+}
+
 // ---- Frame builder/parser -----------------------------------------------
 function buildFrame(target, txId, type, payload) {
   const totalLen = 4 + 7 + payload.length + 2;
@@ -287,7 +403,7 @@ const dji55Driver = {
 
   detect({ device }) {
     const n = (device?.name || '').toLowerCase();
-    return /action\s*3|oa3/.test(n);
+    return /action\s*[3-5]|oa[3-5]|osmo/i.test(n);
   },
 
   buildFrame({ target, txId, type, payload }) {
@@ -432,7 +548,7 @@ const dji0xaaDriver = {
   isRecordOk() { return false; },
 };
 
-const DRIVERS = [dji55Driver, dji0xaaDriver];
+const DRIVERS = [dji55Driver];
 
 function selectDriver({ device }) {
   for (const d of DRIVERS) {
@@ -588,34 +704,52 @@ export class DJIControl extends EventTarget {
     if (sessions.length === 0) throw new Error('No connected cameras');
     return Promise.all(sessions.map(async (s) => {
       try {
-        // NOTE: We tried auto-switching the camera from Photo → Video mode
-        // via BLE before record. HCI sniff of DJI Mimo confirmed mode
-        // switching goes over WiFi, not BLE. The camera's BLE channel
-        // doesn't accept work-mode commands at all. If the camera is in
-        // Photo mode, Do Record returns 0xdf and the error message tells
-        // the user to switch manually on the camera body.
-        const resp = await s.sendAndAwait(s.driver.recordFrame(action));
-        if (!s.driver.isRecordOk(resp)) {
-          const status = resp.payload[0];
-          // Known error codes from empirical Action 3 testing:
-          //   0x00 = success
-          //   0xdf = camera rejected (typically Photo mode — user
-          //          must manually switch the camera body to Video)
-          //   0xe0 = wrong target
-          //   0xe3 = bad argument
-          let hint = '';
-          if (status === 0xdf) {
-            hint = ' — camera may be in Photo mode. Switch to Video mode on the camera body (swipe or mode button) and try again.';
-          }
-          throw new Error(`camera returned error 0x${status?.toString(16)}${hint}`);
+        if (s._recordProtocol === 'aa') {
+          return await this._recordViaAA(s, action);
         }
-        s.recording = (action === 'start');
-        this._emitStatus(s);
-        return { ok: true, session: s };
+        // Try 0x55 first (works for Action 3)
+        try {
+          const timeout = s._recordProtocol === '55' ? 3000 : 1500;
+          const resp = await s.sendAndAwait({ ...s.driver.recordFrame(action), timeoutMs: timeout });
+          if (!s.driver.isRecordOk(resp)) {
+            const status = resp.payload[0];
+            let hint = '';
+            if (status === 0xdf) {
+              hint = ' — camera may be in Photo mode. Switch to Video on the camera body.';
+            }
+            throw new Error(`camera returned error 0x${status?.toString(16)}${hint}`);
+          }
+          s._recordProtocol = '55';
+          s.recording = (action === 'start');
+          this._emitStatus(s);
+          return { ok: true, session: s };
+        } catch (e) {
+          if (s._recordProtocol === '55') throw e;
+          this.log('warn', `${s.label()} 0x55 record failed (${e.message}), trying 0xAA…`);
+        }
+        return await this._recordViaAA(s, action);
       } catch (e) {
         return { ok: false, session: s, err: e };
       }
     }));
+  }
+
+  async _recordViaAA(s, action) {
+    const seq = nextAASeq();
+    const resp = await s.sendAAAndAwait({
+      seq,
+      cmdSet: AA_REC_CMDSET,
+      cmdId: AA_REC_CMDID,
+      payload: buildAARecordPayload(action === 'start'),
+      timeoutMs: 5000,
+    });
+    if (resp.payload.length >= 1 && resp.payload[0] !== 0x00) {
+      throw new Error(`0xAA record error: ret_code=0x${resp.payload[0].toString(16)}`);
+    }
+    s._recordProtocol = 'aa';
+    s.recording = (action === 'start');
+    this._emitStatus(s);
+    return { ok: true, session: s };
   }
 
   // ---- Live preview (RTMP) fan-out ------------------------------------
@@ -724,6 +858,7 @@ class CameraSession {
     this.reconnecting = false;
     this.reconnectAttempt = 0;
     this._reconnectTimer = null;
+    this._recordProtocol = null; // null = unknown, '55' or 'aa'
     this.onGattDisconnected = this.onGattDisconnected.bind(this);
   }
 
@@ -821,30 +956,42 @@ class CameraSession {
     merged.set(incoming, this.rxBuffer.length);
     this.rxBuffer = merged;
 
-    const sof = this.driver.sof;
-    const minLen = this.driver.minFrameLen;
-    while (this.rxBuffer.length >= minLen) {
-      if (this.rxBuffer[0] !== sof) {
-        const i = this.rxBuffer.indexOf(sof);
-        if (i < 0) { this.rxBuffer = new Uint8Array(0); return; }
-        this.rxBuffer = this.rxBuffer.slice(i);
-        if (this.rxBuffer.length < minLen) return;
+    while (this.rxBuffer.length >= 4) {
+      const sof = this.rxBuffer[0];
+      if (sof === 0x55) {
+        if (this.rxBuffer.length < 13) return;
+        const totalLen = this.rxBuffer[1];
+        if (totalLen < 13) { this.rxBuffer = this.rxBuffer.slice(1); continue; }
+        if (this.rxBuffer.length < totalLen) return;
+        const frame = this.rxBuffer.slice(0, totalLen);
+        this.rxBuffer = this.rxBuffer.slice(totalLen);
+        const parsed = this.driver.parseFrame(frame);
+        if (!parsed.ok) {
+          this.control.log('warn', `frame parse error: ${parsed.reason} raw=${hex(frame)}`);
+          continue;
+        }
+        this.dispatchFrame(parsed);
+      } else if (sof === 0xAA) {
+        if (this.rxBuffer.length < 3) return;
+        const totalLen = (this.rxBuffer[1] | (this.rxBuffer[2] << 8)) & 0x3FF;
+        if (totalLen < 16) { this.rxBuffer = this.rxBuffer.slice(1); continue; }
+        if (this.rxBuffer.length < totalLen) return;
+        const frame = this.rxBuffer.slice(0, totalLen);
+        this.rxBuffer = this.rxBuffer.slice(totalLen);
+        const parsed = parseAAFrame(frame);
+        if (!parsed.ok) {
+          this.control.log('warn', `0xAA frame parse error: ${parsed.reason}`);
+          continue;
+        }
+        this.dispatchAAFrame(parsed);
+      } else {
+        const i55 = this.rxBuffer.indexOf(0x55);
+        const iAA = this.rxBuffer.indexOf(0xAA);
+        const next = i55 >= 0 && iAA >= 0 ? Math.min(i55, iAA)
+                   : i55 >= 0 ? i55 : iAA >= 0 ? iAA : -1;
+        if (next < 0) { this.rxBuffer = new Uint8Array(0); return; }
+        this.rxBuffer = this.rxBuffer.slice(next);
       }
-      const totalLen = this.rxBuffer[1];
-      if (totalLen < minLen) {
-        // bogus, skip this byte
-        this.rxBuffer = this.rxBuffer.slice(1);
-        continue;
-      }
-      if (this.rxBuffer.length < totalLen) return; // wait for more
-      const frame = this.rxBuffer.slice(0, totalLen);
-      this.rxBuffer = this.rxBuffer.slice(totalLen);
-      const parsed = this.driver.parseFrame(frame);
-      if (!parsed.ok) {
-        this.control.log('warn', `frame parse error: ${parsed.reason} raw=${hex(frame)}`);
-        continue;
-      }
-      this.dispatchFrame(parsed);
     }
   }
 
@@ -868,6 +1015,35 @@ class CameraSession {
       this.pendingByTxId.delete(f.txId);
       waiter.resolve(f);
     }
+  }
+
+  dispatchAAFrame(f) {
+    this.control.log('ok', `⇐ [0xAA] seq=0x${f.seq.toString(16)} cmd=${f.cmdSet}/${f.cmdId} resp=${f.isResponse} payload=${hex(f.payload)}`);
+    const waiter = this.pendingByTxId.get(f.seq);
+    if (waiter) {
+      clearTimeout(waiter.timer);
+      this.pendingByTxId.delete(f.seq);
+      waiter.resolve(f);
+    }
+  }
+
+  async sendAAAndAwait({ seq, cmdSet, cmdId, payload, timeoutMs = 5000 }) {
+    const frame = buildAAFrame(seq, cmdSet, cmdId, payload);
+    this.control.log('ok', `⇒ [0xAA] seq=0x${seq.toString(16)} cmd=${cmdSet}/${cmdId} payload=${hex(payload)} [${frame.length}B]`);
+    const promise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingByTxId.delete(seq);
+        reject(new Error(`Timeout awaiting 0xAA response for seq=0x${seq.toString(16)}`));
+      }, timeoutMs);
+      this.pendingByTxId.set(seq, { resolve, reject, timer });
+    });
+    try {
+      await this.transport.writeWithoutResponse(this.handle, DJI_SERVICE, DJI_CHAR_WRITE, frame);
+    } catch (e) {
+      this.pendingByTxId.delete(seq);
+      throw new Error(`write failed: ${e.message}`);
+    }
+    return promise;
   }
 
   async sendAndAwait({ target, txId, type, payload, timeoutMs = 5000 }) {
