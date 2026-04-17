@@ -89,8 +89,8 @@ const CRC16M_TABLE = (() => {
   return t;
 })();
 
-function crc16modbus(bytes) {
-  let crc = 0xFFFF;
+function crc16aa(bytes) {
+  let crc = 0x3AA3;
   for (let i = 0; i < bytes.length; i++) {
     crc = (CRC16M_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8)) & 0xFFFF;
   }
@@ -108,12 +108,12 @@ const CRC32_TABLE = (() => {
   return t;
 })();
 
-function crc32(bytes) {
-  let crc = 0xFFFFFFFF;
+function crc32aa(bytes) {
+  let crc = 0x3AA3;
   for (let i = 0; i < bytes.length; i++) {
     crc = (CRC32_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8)) >>> 0;
   }
-  return (crc ^ 0xFFFFFFFF) >>> 0;
+  return crc >>> 0;
 }
 
 // ---- 0xAA frame builder/parser ------------------------------------------
@@ -134,24 +134,23 @@ function crc32(bytes) {
 let _aaSeq = 1;
 function nextAASeq() { _aaSeq = (_aaSeq + 1) & 0xFFFF; return _aaSeq; }
 
-function buildAAFrame(seq, cmdSet, cmdId, payload) {
+function buildAAFrame(seq, cmdType, cmdSet, cmdId, payload) {
   const totalLen = 14 + payload.length + 4;
   const buf = new Uint8Array(totalLen);
   buf[0] = 0xAA;
-  const verLen = (1 << 10) | (totalLen & 0x3FF);
-  buf[1] = verLen & 0xFF;
-  buf[2] = (verLen >> 8) & 0xFF;
-  buf[3] = 0x01; // command, response optional
+  buf[1] = totalLen & 0xFF;
+  buf[2] = (totalLen >> 8) & 0xFF;
+  buf[3] = cmdType;
   buf[4] = 0x00; // no encryption
   buf[8] = seq & 0xFF;
   buf[9] = (seq >> 8) & 0xFF;
-  const c16 = crc16modbus(buf.subarray(0, 10));
+  const c16 = crc16aa(buf.subarray(0, 10));
   buf[10] = c16 & 0xFF;
   buf[11] = (c16 >> 8) & 0xFF;
   buf[12] = cmdSet;
   buf[13] = cmdId;
   if (payload.length > 0) buf.set(payload, 14);
-  const c32 = crc32(buf.subarray(0, totalLen - 4));
+  const c32 = crc32aa(buf.subarray(0, totalLen - 4));
   buf[totalLen - 4] = c32 & 0xFF;
   buf[totalLen - 3] = (c32 >> 8) & 0xFF;
   buf[totalLen - 2] = (c32 >> 16) & 0xFF;
@@ -166,13 +165,14 @@ function parseAAFrame(bytes) {
   const totalLen = verLen & 0x3FF;
   if (totalLen < 16 || bytes.length < totalLen) return { ok: false, reason: `need ${totalLen}, have ${bytes.length}` };
   const headerCrc = bytes[10] | (bytes[11] << 8);
-  if (headerCrc !== crc16modbus(bytes.subarray(0, 10))) return { ok: false, reason: 'header crc16 mismatch' };
+  if (headerCrc !== crc16aa(bytes.subarray(0, 10))) return { ok: false, reason: 'header crc16 mismatch' };
   const frameCrc = (bytes[totalLen - 4] | (bytes[totalLen - 3] << 8) |
     (bytes[totalLen - 2] << 16) | ((bytes[totalLen - 1] << 24) >>> 0)) >>> 0;
-  if (frameCrc !== crc32(bytes.subarray(0, totalLen - 4))) return { ok: false, reason: 'body crc32 mismatch' };
+  if (frameCrc !== crc32aa(bytes.subarray(0, totalLen - 4))) return { ok: false, reason: 'body crc32 mismatch' };
   return {
     ok: true,
     seq: bytes[8] | (bytes[9] << 8),
+    cmdType: bytes[3],
     cmdSet: bytes[12],
     cmdId: bytes[13],
     isResponse: !!(bytes[3] & 0x20),
@@ -734,7 +734,45 @@ export class DJIControl extends EventTarget {
     }));
   }
 
+  async _aaHandshake(s) {
+    if (s._aaConnected) return;
+    this.log('ok', `${s.label()} starting 0xAA connection handshake…`);
+    const seq = nextAASeq();
+    const connPayload = new Uint8Array(33);
+    connPayload[0] = 0x78; connPayload[1] = 0x56; connPayload[2] = 0x34; connPayload[3] = 0x12;
+    connPayload[4] = 6; // mac_addr_len
+    connPayload[26] = 1; // verify_mode = first pair
+    const resp = await s.sendAAAndAwait({
+      seq, cmdType: 0x02, cmdSet: 0x00, cmdId: 0x19,
+      payload: connPayload, timeoutMs: 10000,
+    });
+    this.log('ok', `${s.label()} 0xAA conn response: ${hex(resp.payload)}`);
+    // Wait for camera's own connection request (verify_mode=2) on FFF4
+    const camReq = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        s._aaConnListener = null;
+        reject(new Error('Timeout waiting for camera 0xAA connection request'));
+      }, 30000);
+      s._aaConnListener = (f) => {
+        if (f.cmdSet === 0x00 && f.cmdId === 0x19 && !f.isResponse) {
+          clearTimeout(timer);
+          s._aaConnListener = null;
+          resolve(f);
+        }
+      };
+    });
+    this.log('ok', `${s.label()} camera 0xAA conn request: seq=0x${camReq.seq.toString(16)} payload=${hex(camReq.payload)}`);
+    // Reply with ACK using camera's SEQ
+    const ackPayload = new Uint8Array(9);
+    ackPayload[0] = 0x78; ackPayload[1] = 0x56; ackPayload[2] = 0x34; ackPayload[3] = 0x12;
+    const ackFrame = buildAAFrame(camReq.seq, 0x20, 0x00, 0x19, ackPayload);
+    await s.transport.writeWithoutResponse(s.handle, DJI_SERVICE, DJI_CHAR_NOTIFY2, ackFrame);
+    this.log('ok', `${s.label()} 0xAA handshake complete`);
+    s._aaConnected = true;
+  }
+
   async _recordViaAA(s, action) {
+    await this._aaHandshake(s);
     const seq = nextAASeq();
     const resp = await s.sendAAAndAwait({
       seq,
@@ -859,6 +897,8 @@ class CameraSession {
     this.reconnectAttempt = 0;
     this._reconnectTimer = null;
     this._recordProtocol = null; // null = unknown, '55' or 'aa'
+    this._aaConnected = false;
+    this._aaConnListener = null;
     this.onGattDisconnected = this.onGattDisconnected.bind(this);
   }
 
@@ -866,6 +906,7 @@ class CameraSession {
 
   onGattDisconnected() {
     this.connected = false;
+    this._aaConnected = false;
     this._clearPending('GATT disconnected');
     this.rxBuffer = new Uint8Array(0);
     this.control.log('warn', `${this.label()} disconnected`);
@@ -1019,6 +1060,7 @@ class CameraSession {
 
   dispatchAAFrame(f) {
     this.control.log('ok', `⇐ [0xAA] seq=0x${f.seq.toString(16)} cmd=${f.cmdSet}/${f.cmdId} resp=${f.isResponse} payload=${hex(f.payload)}`);
+    if (this._aaConnListener) this._aaConnListener(f);
     const waiter = this.pendingByTxId.get(f.seq);
     if (waiter) {
       clearTimeout(waiter.timer);
@@ -1027,8 +1069,8 @@ class CameraSession {
     }
   }
 
-  async sendAAAndAwait({ seq, cmdSet, cmdId, payload, timeoutMs = 5000 }) {
-    const frame = buildAAFrame(seq, cmdSet, cmdId, payload);
+  async sendAAAndAwait({ seq, cmdType = 0x01, cmdSet, cmdId, payload, timeoutMs = 5000 }) {
+    const frame = buildAAFrame(seq, cmdType, cmdSet, cmdId, payload);
     this.control.log('ok', `⇒ [0xAA] seq=0x${seq.toString(16)} cmd=${cmdSet}/${cmdId} payload=${hex(payload)} [${frame.length}B]`);
     const promise = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -1038,7 +1080,7 @@ class CameraSession {
       this.pendingByTxId.set(seq, { resolve, reject, timer });
     });
     try {
-      await this.transport.writeWithoutResponse(this.handle, DJI_SERVICE, DJI_CHAR_WRITE, frame);
+      await this.transport.writeWithoutResponse(this.handle, DJI_SERVICE, DJI_CHAR_NOTIFY2, frame);
     } catch (e) {
       this.pendingByTxId.delete(seq);
       throw new Error(`write failed: ${e.message}`);
