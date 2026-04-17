@@ -165,9 +165,9 @@ dji.addEventListener('log', (ev) => log(ev.detail.kind, ev.detail.msg));
     return;
   }
   try {
-    const session = await dji.autoPairLast();
-    if (session) {
-      log('ok', `Auto-reconnected to ${session.device.name || session.device.id}`);
+    const sessions = await dji.autoPairLast();
+    if (sessions && sessions.length > 0) {
+      for (const s of sessions) log('ok', `Auto-reconnected to ${s.device.name || s.device.id} (slot ${s.slot})`);
     }
   } catch (e) {
     log('warn', `Auto-reconnect skipped: ${e.message}`);
@@ -295,31 +295,36 @@ function renderPairedList() {
   }
 }
 
+function camForSlot(slot) {
+  for (const s of dji.pairedCameras.values()) {
+    if (s.slot === slot) return s;
+  }
+  return null;
+}
+
 function updateCamChips() {
-  const sessions = Array.from(dji.pairedCameras.values());
-  const slots = [
-    { ble: 'cam1-ble', bat: 'cam1-bat', rec: 'cam1-rec' },
-    { ble: 'cam2-ble', bat: 'cam2-bat', rec: 'cam2-rec' },
-  ];
-  slots.forEach((slot, i) => {
-    const ble = document.getElementById(slot.ble);
-    const bat = document.getElementById(slot.bat);
-    const rec = document.getElementById(slot.rec);
-    const cam = sessions[i];
+  [1, 2].forEach((slotNum) => {
+    const ble = document.getElementById(`cam${slotNum}-ble`);
+    const bat = document.getElementById(`cam${slotNum}-bat`);
+    const rec = document.getElementById(`cam${slotNum}-rec`);
+    const label = document.getElementById(`cam${slotNum}-label`);
+    const cam = camForSlot(slotNum);
     if (!cam) {
+      label.textContent = `Cam ${slotNum}`;
       ble.textContent = 'BLE: —'; ble.className = 'chip';
       bat.textContent = 'Batt: —'; bat.className = 'chip';
       rec.textContent = '● IDLE'; rec.className = 'chip';
       return;
     }
+    label.textContent = cam.device.name || `Cam ${slotNum}`;
     if (cam.connected) {
-      ble.textContent = 'BLE: ✓';
+      ble.textContent = 'BLE: OK';
       ble.className = 'chip ok';
     } else if (cam.reconnecting) {
-      ble.textContent = 'BLE: ↻';
+      ble.textContent = 'BLE: ...';
       ble.className = 'chip warn';
     } else {
-      ble.textContent = 'BLE: ✗';
+      ble.textContent = 'BLE: OFF';
       ble.className = 'chip warn';
     }
     bat.textContent = cam.battery == null ? 'Batt: —' : `Batt: ${cam.battery}%`;

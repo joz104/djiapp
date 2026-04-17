@@ -601,58 +601,69 @@ export class DJIControl extends EventTarget {
       optionalServices: [DJI_SERVICE, 'battery_service'],
     });
 
+    const saved = this._getRememberedDevices();
+    const prev = saved.find(e => e.deviceId === (handle.id || handle.deviceId));
     const session = await this._bringUpSession(handle);
-    // On successful pair, remember this device so we can auto-reconnect
-    // next time the app opens without the picker.
-    this._rememberDevice(handle);
+    session.slot = prev ? prev.slot : this._nextSlot();
+    this._rememberDevice(handle, session.slot);
     return session;
   }
 
-  // Auto-pair with the device saved from the last successful pair. No
-  // picker — goes straight through the transport's getKnownDevice(...)
-  // helper. Called on app startup; silently no-ops if nothing's saved
-  // or the device isn't reachable.
   async autoPairLast() {
     if (!this.isSupported()) return null;
-    const saved = this._getRememberedDevice();
-    if (!saved) return null;
-    try {
-      await this._ensureTransport();
-      if (typeof this.transport.getKnownDevice !== 'function') {
-        this.log('warn', `Auto-pair unsupported on ${this.transport.name} transport`);
-        return null;
-      }
-      this.log('ok', `Auto-pairing saved device ${saved.name || saved.deviceId}…`);
-      const handle = await this.transport.getKnownDevice(saved);
-      return await this._bringUpSession(handle);
-    } catch (e) {
-      this.log('warn', `Auto-pair failed: ${e.message}. Tap Pair to reconnect.`);
+    const saved = this._getRememberedDevices();
+    if (saved.length === 0) return null;
+    await this._ensureTransport();
+    if (typeof this.transport.getKnownDevice !== 'function') {
+      this.log('warn', `Auto-pair unsupported on ${this.transport.name} transport`);
       return null;
     }
+    const results = [];
+    for (const entry of saved) {
+      try {
+        this.log('ok', `Auto-pairing ${entry.name || entry.deviceId} (slot ${entry.slot})…`);
+        const handle = await this.transport.getKnownDevice(entry);
+        const session = await this._bringUpSession(handle);
+        session.slot = entry.slot;
+        results.push(session);
+      } catch (e) {
+        this.log('warn', `Auto-pair ${entry.name || entry.deviceId}: ${e.message}`);
+      }
+    }
+    return results;
   }
 
-  forgetLastDevice() {
-    try { localStorage.removeItem('fmc-last-paired'); } catch {}
-    this.log('ok', 'Forgot saved pairing.');
+  forgetAllDevices() {
+    try { localStorage.removeItem('fmc-paired-cameras'); } catch {}
+    this.log('ok', 'Forgot all saved pairings.');
   }
 
-  _rememberDevice(handle) {
+  _rememberDevice(handle, slot) {
     try {
-      localStorage.setItem('fmc-last-paired', JSON.stringify({
-        deviceId: handle.id || handle.deviceId,
-        name: handle.name || null,
-      }));
+      const all = this._getRememberedDevices();
+      const id = handle.id || handle.deviceId;
+      const existing = all.findIndex(e => e.deviceId === id);
+      const entry = { deviceId: id, name: handle.name || null, slot };
+      if (existing >= 0) all[existing] = entry;
+      else all.push(entry);
+      localStorage.setItem('fmc-paired-cameras', JSON.stringify(all));
     } catch {}
   }
 
-  _getRememberedDevice() {
+  _getRememberedDevices() {
     try {
-      const raw = localStorage.getItem('fmc-last-paired');
-      if (!raw) return null;
+      const raw = localStorage.getItem('fmc-paired-cameras');
+      if (!raw) return [];
       const parsed = JSON.parse(raw);
-      if (!parsed || !parsed.deviceId) return null;
-      return parsed;
-    } catch { return null; }
+      return Array.isArray(parsed) ? parsed.filter(e => e && e.deviceId) : [];
+    } catch { return []; }
+  }
+
+  _nextSlot() {
+    const taken = new Set();
+    for (const s of this.pairedCameras.values()) if (s.slot) taken.add(s.slot);
+    for (const e of this._getRememberedDevices()) if (e.slot) taken.add(e.slot);
+    return taken.has(1) ? (taken.has(2) ? 1 : 2) : 1;
   }
 
   // Shared pair flow for fresh requestDevice() picks and auto-pair.
@@ -887,6 +898,7 @@ class CameraSession {
     this.transport = transport;
     this.connected = false;
     this.recording = false;
+    this.slot = null;
     this.streaming = false;
     this.streamUrl = null;
     this.battery = null;
