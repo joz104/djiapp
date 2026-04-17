@@ -167,6 +167,46 @@ djiapp/
     can't find `git-remote-https`. Use system `git push` directly,
     not `gh repo create --push`.
 
+### 0xAA R-SDK protocol (Action 4)
+
+23. **Action 4 speaks 0x55 for pair but 0xAA for commands.** Pair handshake
+    uses the same 0x55 pair frame as Action 3. But record, mode switch,
+    and status push all use the 0xAA R-SDK protocol. The `_recordFanOut`
+    method auto-detects: tries 0x55 first (1.5s timeout), falls back to
+    0xAA. Protocol cached per session as `_recordProtocol`.
+
+24. **0xAA writes go to FFF5, not FFF3.** The 0x55 protocol writes to
+    FFF3. The 0xAA protocol writes to FFF5. Writing 0xAA frames to FFF3
+    is silently ignored — the camera never even sees them. This cost us
+    an entire debug cycle.
+
+25. **0xAA CRC init is 0x3AA3, not standard.** Both CRC16 and CRC32 use
+    DJI-custom init value `0x3AA3`. The polynomials and reflection are
+    standard (CRC16: poly 0x8005 reflected, CRC32: poly 0x04C11DB7
+    reflected), but standard MODBUS (init 0xFFFF) or standard CRC32
+    (init 0xFFFFFFFF) produce WRONG checksums. CRC32 also has NO final
+    XOR (standard CRC32 does `^ 0xFFFFFFFF`).
+
+26. **0xAA version field = 0.** The ver/length field at bytes [1-2] uses
+    bits [15:10] for version, [9:0] for length. Version must be 0
+    (not 1). DJI SDK docs confirm "default value 0".
+
+27. **0xAA handshake (CmdSet=0x00/CmdID=0x19) is mandatory.** Camera
+    silently ignores ALL 0xAA commands until the 4-step connection
+    handshake completes. Steps: (1) we send connection request with
+    verify_mode=1, (2) camera responds, (3) camera sends its own
+    connection request with verify_mode=2, (4) we ACK using camera's
+    SEQ number. Implemented in `_aaHandshake()`, runs automatically on
+    first 0xAA command per session.
+
+28. **Mode switch "reserved" bytes are magic `[0x01, 0x47, 0x39, 0x36]`.**
+    Not zeros. Both DJI SDK docs and rhoenschrat use this value.
+
+29. **Action 4 BLE name is user-customizable.** Our Action 4 advertises
+    as "johnzorychta2" (the phone name from DJI Mimo pairing), NOT
+    "Action 4" or "OA4". Don't rely on device name for model detection.
+    The device info push (`type=0x810040`) contains model "ac203".
+
 ### Debugging
 
 19. **`adb logcat | grep FMC`** is the debug channel. `app.js:log()` mirrors
@@ -218,55 +258,54 @@ djiapp/
 
 ## Current state (keep this updated)
 
-See `docs/ROADMAP.md` for the full picture. As of 2026-04-15:
+See `docs/ROADMAP.md` for the full picture. As of 2026-04-16:
 
-**Shipped and working on Osmo Action 3 hardware:**
+**Shipped and working on BOTH Action 3 and Action 4 hardware:**
 - ✅ Capacitor APK build via GHA → rolling GitHub Release at `v2-latest`
 - ✅ BLE pair handshake via Capacitor BLE plugin (hex-string bridge)
 - ✅ Auto-reconnect on BLE drop with `[0, 2, 5, 15, 30, 60]s` backoff,
       recording state preserved across the drop
-- ✅ Battery % displayed on each camera's chip overlay from the status push
+- ✅ Battery % displayed on each camera's chip overlay
 - ✅ Master Record button: `startRecordAll` / `stopRecordAll` fan-out with
       `Promise.all`, running `mm:ss` timer while active, optimistic UI with
       rollback on camera reject
-- ✅ Multi-protocol driver architecture: `dji55Driver` for Action 3,
-      `dji0xaaDriver` stub for Action 4. `selectDriver({device})` picks by
-      device name with 0x55 as safe fallback
-- ✅ Live preview end-to-end: MediaMTX runs as a bundled foreground service,
-      BLE `setupWifi` puts the camera on the hotspot, `startStreaming` points
-      RTMP at the tablet, video panes auto-load the HLS URLs. No Mimo.
-- ✅ **Simultaneous preview + record** — Action 3 accepts `Do Record` while
-      in livestream mode, so the coach can keep preview up as a confidence
-      monitor during the match
+- ✅ **Dual-protocol recording**: Action 3 uses 0x55 (CmdSet=0x02/CmdID=0x02),
+      Action 4 uses 0xAA R-SDK (CmdSet=0x1D/CmdID=0x03). Auto-detected on
+      first record: tries 0x55 with 1.5s timeout, falls back to 0xAA with
+      full handshake. Protocol cached per session for instant subsequent use.
+- ✅ **0xAA connection handshake** (CmdSet=0x00/CmdID=0x19, 4-step) runs
+      automatically before any 0xAA command. Required — camera ignores 0xAA
+      frames without it.
+- ✅ **Mode switching** (Action 4 only): CmdSet=0x1D/CmdID=0x04. Tappable
+      mode chip on each camera pane cycles Video/Photo/Slow-Mo/Timelapse/
+      Hyperlapse. Not available on Action 3 via BLE.
+- ✅ **0xAA status push** (Action 4): 38-byte push at 2Hz with camera mode,
+      recording state, battery, remaining storage. Much richer than the 0x55
+      status push.
+- ✅ **Multi-camera persistence**: all paired cameras saved to localStorage
+      with stable slot assignments. Auto-reconnects all saved cameras on app
+      launch. Camera names shown on video pane labels.
+- ✅ Live preview end-to-end (Action 3 only — untested on Action 4)
 - ✅ UI redesign (v23): slim topbar, video grid with overlay chips,
-      big red Master Record pill at the bottom, right-slide setup drawer
-      with hotspot creds + preview quality + paired cameras, collapsed log
-      bar that expands into a modal
-- ✅ Preview quality selects (res / fps / bitrate) persisted to localStorage
-      and plumbed into `startStreaming`
-- ✅ Stitched view toggle with canvas 2D compositor (v26). Calibration:
-      horizontal FoV + angle between cameras, feather or hard-seam blend,
-      all persisted to localStorage. Not a real homographic stitch but
-      good enough for framing on a static tripod pair
-- ✅ Robust HLS auto-retry (v27) — `VideoPane.load` does full destroy +
-      recreate cycles on fatal errors instead of the hls.js `startLoad()`
-      dead-end; click-to-play fallback on the `<video>` elements
+      big red Master Record pill, right-slide setup drawer, collapsed log bar
+- ✅ Stitched view toggle with canvas 2D compositor (v26)
+
+**Action 3 vs Action 4 — what works on which:**
+| Feature | Action 3 | Action 4 |
+|---|---|---|
+| BLE pair (0x55) | ✅ | ✅ |
+| Record start/stop | ✅ (0x55) | ✅ (0xAA) |
+| Mode switch (Video/Photo/etc) | ❌ not via BLE | ✅ (0xAA) |
+| Status push (battery, mode, rec state) | ✅ (0x55, battery only) | ✅ (0xAA, full) |
+| Live preview (RTMP) | ✅ | ❌ untested |
+| WiFi setup (setupWifi) | ✅ | ❌ untested |
 
 **Open / partially done:**
-- 🚧 **Status-push channel does NOT reflect recording state.** Don't rely
-      on it for record-state UI; the command response is the source of truth
-- 🚧 **Stitched view is untested with two real cameras** — single-camera
-      test shows the canvas loop runs, but calibration + alignment need
-      the second camera to actually validate
-- 🚧 **4K SD recording during livestream** — empirically unverified
-      whether the Action 3 keeps SD at full res while streaming at 720p
-- ❌ **Action 4 hardware not yet received.** Expected "in a few days" as of
-      2026-04-15. The probe panel was removed from the UI in Phase 5.1 but
-      `DJIControl.testRecordFrame` stays in code for re-enabling behind a
-      dev flag when the hardware arrives
-- ❌ **Signed release APK.** All current builds are debug-signed. Need a
-      proper keystore + signing config in GHA for Play Store or wider
-      distribution
+- 🚧 **Stitched view untested with two real cameras**
+- 🚧 **4K SD recording during livestream** — unverified on Action 3
+- 🚧 **Live preview on Action 4** — the 0x55 stream commands may not work;
+      Action 4 may need 0xAA equivalents for WiFi/stream setup
+- ❌ **Signed release APK** — all current builds are debug-signed
 
 ## Reference repos (in priority order)
 

@@ -25,12 +25,21 @@ Phases, current state, and open blockers. The status log at the bottom is the ru
 - [ ] Measure end-to-end latency between the two cameras when both are triggered (needs Action 4)
 - [ ] Track recording state robustly — we currently flip `session.recording` on command success, but if the user presses the camera's physical shutter our state goes stale. Low priority until it matters.
 
-### Phase 3 — second camera (Action 4) 🚧
-- [ ] Receive Action 4 hardware
-- [ ] Capture raw BLE notification bytes to determine which protocol it speaks (0x55 vs 0xAA)
-- [ ] If it speaks 0xAA, fill in `dji0xaaDriver` with rhoenschrat's frame layout
-- [x] Multi-protocol architecture — each `CameraSession` takes a driver; `selectDriver` chooses by device name with 0x55 as safe fallback
-- [ ] Test synced record on both cameras from the master button
+### Phase 3 — second camera (Action 4) ✅
+- [x] Action 4 hardware received and tested (2026-04-16)
+- [x] BLE notification capture: Action 4 speaks 0x55 for pair, 0xAA for commands
+- [x] 0xAA R-SDK protocol implemented: CRC16/CRC32 (init 0x3AA3), frame builder/parser,
+      write to FFF5, 4-step connection handshake (CmdSet=0x00/CmdID=0x19)
+- [x] Record via 0xAA: CmdSet=0x1D/CmdID=0x03, device_id=0xFF33
+- [x] Auto-detection: `_recordFanOut` tries 0x55 (1.5s timeout), falls back to 0xAA,
+      caches working protocol per session
+- [x] Mode switch via 0xAA: CmdSet=0x1D/CmdID=0x04, tappable mode chip on UI
+- [x] 0xAA status push subscription: CmdSet=0x1D/CmdID=0x05 → 2Hz push with
+      camera mode, recording state, battery, remaining storage
+- [x] Multi-camera persistence: all paired cameras saved to localStorage with
+      stable slot assignments, auto-reconnect all on app launch
+- [x] Camera names displayed on video pane labels from BLE device name
+- [x] Master Record works on both Action 3 and Action 4 simultaneously
 
 ### Phase 4 — live preview pipeline via native Android app ✅
 Decided 2026-04-14: pivot off pure-PWA and wrap the app in Capacitor so we can
@@ -159,77 +168,41 @@ view for the two-camera overlap-and-stitch-in-post workflow.
   load/play races.
 
 ### Phase 6 — remaining polish / ship ❌
-- [ ] Hardware verification: confirm SD recording stays at the camera's
-      configured resolution (4K) while preview streams at 720p. Simplest
-      check is the camera's own on-screen REC indicator; or pull a clip
-      off the SD and ffprobe it.
-- [ ] Per-camera Y-offset slider for the stitched view, if field testing
-      shows tripod-height differences too big for feather blending to mask.
-- [ ] Decode the `target=0x208, type=0x3ee80` livestream telemetry push
-      (current hypothesis: byte 3 is a segment counter, bytes 6-7 are
-      bitrate kbps LE, byte 8 is some flag). A live bitrate chip would
-      help the coach notice if the RTMP connection degrades mid-match.
-- [ ] Signed release APK: generate a proper keystore, wire it into
-      `.github/workflows/android-build.yml` as a repo secret, publish a
-      signed APK (or AAB) alongside the debug build. Required before
-      Play Store internal testing or direct APK distribution to other
-      coaches.
-- [ ] Action 4 BLE probe: when hardware arrives, use the
-      `DJIControl.testRecordFrame` method (re-exposed behind a dev flag)
-      to capture first-notification bytes and determine if it speaks
-      0x55 or 0xAA. Fill in `dji0xaaDriver` if needed.
-- [ ] Real PWA icons (currently solid-dark placeholders).
-- [ ] Haptic feedback on master record tap (`navigator.vibrate(50)`).
-- [ ] Decide branch strategy: merge `v2-capacitor` into `main` as the
-      shipping branch, or keep both (main = PWA dev loop, v2-capacitor =
-      APK shipping).
+- [ ] Test live preview on Action 4 (0x55 stream commands may need 0xAA
+      equivalents)
+- [ ] Test stitched view with both cameras simultaneously
+- [ ] Hardware verification: confirm SD recording stays at 4K while
+      streaming at 720p
+- [ ] Signed release APK with proper keystore
+- [ ] Real PWA icons (currently solid-dark placeholders)
+- [ ] Haptic feedback on master record tap (`navigator.vibrate(50)`)
+- [ ] Decide branch strategy: merge `v2-capacitor` into `main`?
 
 ## Open blockers (priority order)
 
-1. **Action 4 untested.** Hardware not yet received. Don't know whether it
-   speaks 0x55, 0xAA, or both, and whether the Action 3's record opcode
-   (`0x0102 / 0x020240`) works there. The `dji0xaaDriver` stub exists so we
-   can slot in a real driver when we capture the first notification bytes.
-   The `testRecordFrame` probe method stays in `dji-control.js` for this.
+1. **Live preview untested on Action 4.** The 0x55 stream commands
+   (setupWifi, startStreaming) work on Action 3 but are untested on
+   Action 4. The Action 4 may need 0xAA equivalents for WiFi setup and
+   streaming, or it may accept the 0x55 stream commands despite rejecting
+   0x55 record commands. Needs field testing.
 
-2. **4K recording verification.** Empirical test pending: does the Osmo
-   Action 3 actually record to SD at the body-configured resolution (e.g.
-   4K 30) while it's simultaneously streaming RTMP at the preview resolution
-   (e.g. 720p), or does livestream mode downgrade the SD recording? User
-   to verify by watching the camera's own REC indicator or ffprobing a
-   clip pulled from the SD card.
+2. **Mode switch only works on Action 4.** The 0xAA mode switch command
+   (CmdSet=0x1D/CmdID=0x04) is Action 4+ only. The Action 3 doesn't
+   respond to 0xAA commands and its 0x55 protocol doesn't expose a
+   mode-switch opcode. User must switch modes on the Action 3 body.
 
-3. **Camera goes silent after one pair attempt.** Once the Action 3 accepts
-   a connection, it stops advertising for a while. Workaround: power-cycle
-   the camera to re-advertise. Could be fixed by a clean disconnect path
-   (explicit disconnect message before releasing the GATT server). Low
-   priority.
+3. **4K recording verification.** Empirical test pending: does the Osmo
+   Action 3 actually record to SD at full res while streaming at 720p?
 
-4. **Recording state tracking is command-local.** `session.recording` is
-   only updated on successful start/stop commands. If the user hits the
-   physical shutter on the camera, the UI state goes stale. The status
-   push at `target=0x205` does NOT reflect recording state — confirmed by
-   an 84s capture spanning a real record on/off with no byte changes. If
-   we need true state we'd have to find a different status channel. The
-   new `target=0x208, type=0x3ee80` push that appears during livestream
-   mode (Phase 4.3) is a candidate but hasn't been decoded yet.
+4. **Action 3 recording state tracking is command-local.** On Action 3,
+   `session.recording` is only updated on successful start/stop commands.
+   The 0x55 status push does NOT reflect recording state. On Action 4,
+   the 0xAA status push (CmdID=0x02) DOES reflect recording state at 2Hz
+   (camera_status=0x03 = recording), so this is solved for Action 4.
 
-5. **Hotspot must be 2.4 GHz.** The Action 3 BLE stack only scans for
-   2.4 GHz WiFi during `setupWifi` and fails silently after ~30s with
-   response payload `0x01 0xff`. Modern Android phones default their
-   mobile hotspot to 5 GHz or "auto" (which prefers 5 GHz). The UI hint
-   in the setup drawer says "2.4 GHz" but users will forget — worth
-   calling out on first-run or in a welcome screen.
+5. **Hotspot must be 2.4 GHz** for Action 3 live preview.
 
-## Bets I'm hedging
-
-- **If the Action 4 turns out to support 0x55 too** we're done — same
-  driver, same opcodes. If it only speaks 0xAA (rhoenschrat's protocol),
-  we need a second driver. The architecture supports either outcome
-  with zero changes to `CameraSession`.
-- **If the canvas stitcher isn't good enough visually** (Phase 5.4), the
-  next step is per-camera Y-offset + possibly a barrel dewarp shader.
-  We'd switch from canvas 2D to WebGL for that; not in scope yet.
+6. **Signed release APK** needed for distribution beyond sideloading.
 
 ## Status log
 
@@ -288,6 +261,36 @@ Append one entry per session. Keep each entry brief — what changed, what we le
   This status log entry is the consolidation.
 - Next: verify v27 live preview on hardware, decide on signed-release
   tooling, decode the `0x3ee80` livestream telemetry push.
+
+### 2026-04-16 — Action 4 recording working, 0xAA protocol implemented
+- **Action 4 hardware received and tested.** BLE name is "johnzorychta2" (phone
+  name from Mimo, not "Action 4"). Pairs fine with 0x55 pair frame (same as
+  Action 3). Sends 0x55 status pushes. But completely ignores 0x55 record
+  commands — no response, no error.
+- **Discovered Action 4 uses 0xAA R-SDK protocol for commands.** Three bugs
+  in the first 0xAA attempt: (1) wrote to FFF3 instead of FFF5 — camera never
+  saw the frame; (2) used standard CRC init values (0xFFFF/0xFFFFFFFF) instead
+  of DJI custom 0x3AA3; (3) set version=1 instead of 0. All diagnosed via
+  `adb logcat | grep FMC` and DJI SDK reference docs.
+- **0xAA connection handshake required.** Camera ignores all 0xAA commands
+  without a 4-step CmdSet=0x00/CmdID=0x19 handshake. Implemented as
+  `_aaHandshake()` — runs automatically on first 0xAA command per session.
+- **Record working on both cameras.** `_recordFanOut` auto-detects protocol:
+  0x55 (1.5s timeout) → 0xAA fallback. Protocol cached per session. Master
+  Record fires both cameras simultaneously.
+- **Mode switch implemented.** CmdSet=0x1D/CmdID=0x04 with tappable mode chip
+  on each video pane. Cycles Video/Photo/Slow-Mo/Timelapse/Hyperlapse.
+  Action 4 only — Action 3 doesn't support mode switch via BLE.
+- **0xAA status push subscribed.** CmdSet=0x1D/CmdID=0x05 (2Hz + state change).
+  38-byte push parsed for camera_mode, camera_status (recording=0x03),
+  battery, remaining storage. Much richer than 0x55 status push.
+- **Multi-camera persistence.** All paired cameras saved to localStorage
+  (`fmc-paired-cameras`) with stable slot assignments. Auto-reconnects all
+  saved cameras on app launch. Camera names shown on video pane labels.
+- Commits: `dc8df26` (v39 initial 0xAA) → `c36b3ff` (v40 CRC/char/handshake
+  fixes) → `579ed04` (v41 persistence + names) → `0ff878e` (v42 mode switch +
+  status push).
+- Next: test live preview on Action 4, verify stitched view with two cameras.
 
 ### 2026-04-14 (later, pt 4) — Phase 4 implementation: BLE transport swap, MediaMtx plugin, self-contained preview
 - **BLE transport swap (v13, `3d32a75`)** — added `www/ble-transport.js` with

@@ -11,11 +11,16 @@ DJI Osmo Action cameras expose one BLE service (`0xFFF0`) on characteristics `0x
 | **node-osmo / Moblin** | `0x55` | DJI Mimo "Livestream via RTMP" | Pair, Wi-Fi setup, RTMP livestream start/stop. **No SD record.** |
 | **DJI R-SDK / GPS Remote** | `0xAA` | DJI Osmo GPS Remote (GL2) | Pair, SD record start/stop, mode switch, highlight tag, key events. |
 
-**The Osmo Action 3 speaks the `0x55` protocol.** Confirmed empirically by capturing notification bytes on FFF4 during a pair attempt — every frame starts with `0x55`.
+**The Osmo Action 3 speaks the `0x55` protocol only.** Confirmed empirically.
 
-Rhoenschrat's research suggests newer cameras (Action 4 / 5 Pro / 6) may speak the `0xAA` protocol, possibly in addition to `0x55`. Action 4 is untested in this project as of now.
+**The Osmo Action 4 speaks BOTH protocols.** Confirmed 2026-04-16:
+- `0x55` for pair handshake (same pair frame as Action 3)
+- `0xAA` for record, mode switch, status push, and all camera commands
+- The Action 4 ignores 0x55 record commands (CmdSet=0x02/CmdID=0x02) entirely — no response, no error
+- `0xAA` writes go to **FFF5** (not FFF3 like 0x55)
+- Notifications for both protocols arrive on **FFF4** (detected by SOF byte)
 
-The rest of this document is the **`0x55` protocol**. When we test the Action 4, add a parallel section for `0xAA`.
+This document covers both protocols. The `0x55` section is first, then `0xAA`.
 
 ---
 
@@ -208,10 +213,172 @@ Chrome Web Bluetooth on Android negotiates MTU automatically; typical values are
 
 ---
 
+---
+
+## `0xAA` R-SDK protocol (Action 4+)
+
+Confirmed working on Osmo Action 4 as of 2026-04-16. Reference implementations: rhoenschrat/DJI-Remote (ESP32, C) and dji-sdk/Osmo-GPS-Controller-Demo (STM32, C).
+
+### Frame layout
+
+All multibyte fields **little-endian**.
+
+```
+off  size  field
+ 0    1    SOF = 0xAA
+ 1    2    ver(6b, bits[15:10]) | length(10b, bits[9:0])  — version=0
+ 3    1    CmdType  (bit5=isResponse, bits[4:0]=ack mode: 0=none, 1=optional, 2=required)
+ 4    1    ENC = 0x00 (no encryption)
+ 5    3    reserved (zeros)
+ 8    2    SEQ (u16) — sequence number, matches responses to requests
+10    2    CRC16 over bytes[0..9]
+12    1    CmdSet
+13    1    CmdID
+14    N    data payload
+14+N  4    CRC32 over bytes[0..13+N]
+```
+
+- `totalLen` = `14 + len(payload) + 4` (header + data + CRC32)
+- Version MUST be 0 (not 1)
+- **Write to FFF5** (not FFF3 like 0x55)
+- Responses arrive on FFF4 (same as 0x55), distinguished by SOF byte
+
+### CRC16 — header check
+
+- Polynomial: `0x8005`, reflected → `0xA001`
+- **Init: `0x3AA3`** (NOT standard MODBUS 0xFFFF)
+- Reflected in/out: true
+- Xorout: `0x0000`
+- Covers bytes `[0..9]`
+
+### CRC32 — body check
+
+- Polynomial: `0x04C11DB7`, reflected → `0xEDB88320`
+- **Init: `0x3AA3`** (NOT standard 0xFFFFFFFF)
+- Reflected in/out: true
+- **Xorout: `0x0000`** (NOT standard 0xFFFFFFFF — no final XOR)
+- Covers bytes `[0..totalLen-5]`
+
+### Verified test vector
+
+DJI SDK docs example (mode switch to Hyperlapse):
+```
+AA 1B 00 01 00 00 00 00 05 00 57 EE 1D 04 00 00 33 FF 0A 01 47 39 36 F4 FA E1 D0
+```
+- CRC16 over bytes[0..9] = 0xEE57 → bytes [57 EE] LE ✓
+- CRC32 over bytes[0..22] = 0xD0E1FAF4 → bytes [F4 FA E1 D0] LE ✓
+
+### Connection handshake (mandatory before any commands)
+
+CmdSet=0x00, CmdID=0x19. Four steps:
+
+1. **Controller → Camera** (CmdType=0x02, response required):
+   ```
+   Payload (33 bytes):
+   [0..3]   device_id    = uint32 LE (any nonzero value, e.g. 0x12345678)
+   [4]      mac_addr_len = 6
+   [5..20]  mac_addr     = 16 bytes (pad with zeros)
+   [21..24] fw_version   = uint32 LE = 0
+   [25]     conidx       = 0
+   [26]     verify_mode  = 1 (first pairing)
+   [27..28] verify_data  = uint16 LE (random)
+   [29..32] reserved     = zeros
+   ```
+
+2. **Camera → Controller** (response, same SEQ): `ret_code=0x00` at payload[4] = OK
+
+3. **Camera → Controller** (new command frame, different SEQ): camera's own connection request with `verify_mode=2, verify_data=0` = accepted
+
+4. **Controller → Camera** (CmdType=0x20 ACK, SAME SEQ as step 3):
+   ```
+   Payload (9 bytes):
+   [0..3] device_id = same as step 1
+   [4]    ret_code  = 0x00
+   [5..8] reserved  = zeros
+   ```
+
+### Device IDs
+
+| Model | device_id |
+|---|---|
+| Osmo Action 4 | `0xFF33` → wire bytes `[33, FF, 00, 00]` |
+| Osmo Action 5 Pro | `0xFF44` |
+| Osmo Action 6 | `0xFF55` |
+
+### Command catalog
+
+#### Record control (CmdSet=0x1D, CmdID=0x03)
+```
+Payload (9 bytes):
+[0..3] device_id     = [33, FF, 00, 00] for Action 4
+[4]    record_ctrl   = 0x00=start, 0x01=stop
+[5..8] reserved      = zeros
+```
+Response: `[ret_code(1B), reserved(4B)]`. ret_code 0x00 = success.
+
+#### Mode switch (CmdSet=0x1D, CmdID=0x04)
+```
+Payload (9 bytes):
+[0..3] device_id  = [33, FF, 00, 00]
+[4]    mode       = see table below
+[5..8] reserved   = [0x01, 0x47, 0x39, 0x36] (magic, NOT zeros)
+```
+
+| Mode | Byte |
+|---|---|
+| Slow Motion | `0x00` |
+| Video | `0x01` |
+| Timelapse | `0x02` |
+| Photo | `0x05` |
+| Hyperlapse | `0x0A` |
+| Livestream | `0x1A` |
+| Night | `0x28` |
+
+#### Status subscription (CmdSet=0x1D, CmdID=0x05)
+```
+Payload (6 bytes):
+[0] push_mode = 0x03 (periodic + state change)
+[1] push_freq = 0x14 (2 Hz, only valid value)
+[2..5] reserved = zeros
+```
+
+#### Status push (CmdSet=0x1D, CmdID=0x02) — camera → controller, 38 bytes
+```
+[0]     camera_mode        (same byte values as mode switch)
+[1]     camera_status      (0x00=off, 0x01=idle, 0x03=recording, 0x05=pre-rec)
+[2]     video_resolution
+[3]     fps_idx
+[4]     eis_mode
+[5..6]  record_time (u16, seconds)
+[15..18] remain_capacity (u32, MB)
+[19..22] remain_photo_num (u32)
+[23..26] remain_time (u32, seconds)
+[37]    battery (0-100%)
+```
+
+---
+
+## Gotcha log — things we learned the hard way
+
+| Date | Gotcha |
+|---|---|
+| 2026-04-14 | Picked wrong protocol (0xAA instead of 0x55). Camera never responded. Fix: looked at raw notification bytes, saw SOF=0x55, pivoted. |
+| 2026-04-14 | Hand-rolled CRC didn't match crc-full's output. Fix: bit-reverse the init values (0xEE → 0x77, 0x496C → 0x3692). |
+| 2026-04-14 | Service-UUID scan filter returned zero devices. Fix: `acceptAllDevices: true`. |
+| 2026-04-14 | Action 3 pair triggers a **"confirm pairing code" prompt on the camera screen**. Not documented in node-osmo. TBD how to handle the post-confirmation flow. |
+| 2026-04-16 | Action 4 pairs fine with 0x55 but ignores 0x55 record commands entirely (no response). Uses 0xAA R-SDK protocol for recording. |
+| 2026-04-16 | First 0xAA attempt: wrote to FFF3 instead of FFF5 — camera never saw the frame. 0xAA writes go to FFF5. |
+| 2026-04-16 | Second 0xAA attempt: used standard CRC16-MODBUS (init=0xFFFF) and CRC32 (init=0xFFFFFFFF). DJI uses custom init=0x3AA3 for both, and no final XOR on CRC32. |
+| 2026-04-16 | Third 0xAA attempt: set version=1 in the ver/len field. DJI spec says version=0. |
+| 2026-04-16 | 0xAA handshake is mandatory. Camera ignores all 0xAA commands without the 4-step CmdSet=0x00/CmdID=0x19 connection flow. |
+| 2026-04-16 | Action 4 BLE name is "johnzorychta2" (phone name from Mimo), not "Action 4". Can't detect model from device name. |
+
+---
+
 ## References
 
-- [datagutt/node-osmo](https://github.com/datagutt/node-osmo) — primary reference. `src/message.ts`, `src/device.ts`.
+- [datagutt/node-osmo](https://github.com/datagutt/node-osmo) — primary reference for 0x55 protocol. `src/message.ts`, `src/device.ts`.
 - [eerimoq/moblin](https://github.com/eerimoq/moblin) — Swift upstream. Double-check here if node-osmo seems incomplete.
-- [rhoenschrat/DJI-Remote](https://github.com/rhoenschrat/DJI-Remote) — different protocol (`0xAA`), but useful once we test Action 4+.
-- [dji-sdk/Osmo-GPS-Controller-Demo](https://github.com/dji-sdk/Osmo-GPS-Controller-Demo) — DJI's own ESP32 reference for the `0xAA` protocol.
+- [rhoenschrat/DJI-Remote](https://github.com/rhoenschrat/DJI-Remote) — **primary reference for 0xAA protocol**. ESP32 C code, confirmed working on Action 4/5/6.
+- [dji-sdk/Osmo-GPS-Controller-Demo](https://github.com/dji-sdk/Osmo-GPS-Controller-Demo) — DJI's official 0xAA protocol reference. `docs/protocol_data_segment.md` has the full command catalog.
 - [crc-full (npm)](https://www.npmjs.com/package/crc-full) — the CRC library node-osmo uses. Be aware of its init-reflection behavior when porting.
