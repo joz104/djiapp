@@ -307,6 +307,7 @@ function updateCamChips() {
     const ble = document.getElementById(`cam${slotNum}-ble`);
     const bat = document.getElementById(`cam${slotNum}-bat`);
     const rec = document.getElementById(`cam${slotNum}-rec`);
+    const mode = document.getElementById(`cam${slotNum}-mode`);
     const label = document.getElementById(`cam${slotNum}-label`);
     const cam = camForSlot(slotNum);
     if (!cam) {
@@ -314,6 +315,7 @@ function updateCamChips() {
       ble.textContent = 'BLE: —'; ble.className = 'chip';
       bat.textContent = 'Batt: —'; bat.className = 'chip';
       rec.textContent = '● IDLE'; rec.className = 'chip';
+      mode.textContent = 'MODE'; mode.className = 'chip cam-mode';
       return;
     }
     label.textContent = cam.device.name || `Cam ${slotNum}`;
@@ -331,8 +333,28 @@ function updateCamChips() {
     bat.className = 'chip ' + (cam.battery == null ? '' : cam.battery < 20 ? 'warn' : 'ok');
     rec.textContent = cam.recording ? '● REC' : '● IDLE';
     rec.className = 'chip ' + (cam.recording ? 'rec' : '');
+    mode.textContent = cam.cameraModeName || 'MODE';
+    mode.className = 'chip cam-mode' + (cam.cameraModeName ? ' ok' : '');
   });
 }
+
+// Mode cycling — tap the mode chip to cycle through modes
+[1, 2].forEach((slotNum) => {
+  document.getElementById(`cam${slotNum}-mode`).addEventListener('click', async () => {
+    const cam = camForSlot(slotNum);
+    if (!cam || !cam.connected) { log('warn', 'Camera not connected'); return; }
+    const modes = DJIControl.MODES;
+    const curIdx = modes.findIndex(m => m.byte === cam.cameraMode);
+    const next = modes[(curIdx + 1) % modes.length];
+    log('ok', `Switching ${cam.device.name || 'cam'} to ${next.label}…`);
+    try {
+      await dji.setMode(cam.device.id, next.key);
+      log('ok', `${cam.device.name || 'cam'} now in ${next.label} mode`);
+    } catch (e) {
+      log('err', `Mode switch failed: ${e.message}`);
+    }
+  });
+});
 
 dji.addEventListener('statusChange', () => {
   renderPairedList();

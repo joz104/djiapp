@@ -181,16 +181,54 @@ function parseAAFrame(bytes) {
   };
 }
 
-// 0xAA record command: CmdSet=0x1D, CmdID=0x03
-// Payload: device_id(4B LE) + record_ctrl(1B) + reserved(4B)
-const AA_REC_CMDSET = 0x1D;
-const AA_REC_CMDID  = 0x03;
+// 0xAA device IDs
+const AA_DEVICE_ID = [0x33, 0xFF, 0x00, 0x00]; // 0xFF33 LE for Action 4
 
+// 0xAA record command: CmdSet=0x1D, CmdID=0x03
 function buildAARecordPayload(start) {
   const buf = new Uint8Array(9);
-  buf[0] = 0x33; buf[1] = 0xFF; // device_id = 0xFF33 LE
-  buf[4] = start ? 0x00 : 0x01; // 0x00 = start, 0x01 = stop
+  buf.set(AA_DEVICE_ID, 0);
+  buf[4] = start ? 0x00 : 0x01;
   return buf;
+}
+
+// 0xAA mode switch: CmdSet=0x1D, CmdID=0x04
+const AA_MODES = {
+  'slow-mo': 0x00, 'video': 0x01, 'timelapse': 0x02,
+  'photo': 0x05, 'hyperlapse': 0x0A,
+};
+const AA_MODE_NAMES = { 0x00: 'Slow-Mo', 0x01: 'Video', 0x02: 'Timelapse',
+  0x05: 'Photo', 0x0A: 'Hyperlapse', 0x1A: 'Livestream', 0x28: 'Night' };
+
+function buildAAModeSwitchPayload(mode) {
+  const buf = new Uint8Array(9);
+  buf.set(AA_DEVICE_ID, 0);
+  buf[4] = typeof mode === 'string' ? (AA_MODES[mode] ?? 0x01) : mode;
+  buf[5] = 0x01; buf[6] = 0x47; buf[7] = 0x39; buf[8] = 0x36; // magic reserved
+  return buf;
+}
+
+// 0xAA status subscription: CmdSet=0x1D, CmdID=0x05
+function buildAAStatusSubPayload() {
+  const buf = new Uint8Array(6);
+  buf[0] = 0x03; // periodic + state change
+  buf[1] = 0x14; // 2 Hz
+  return buf;
+}
+
+// 0xAA status push parser: CmdSet=0x1D, CmdID=0x02 (38-byte payload)
+const AA_STATUS_NAMES = { 0x00: 'off', 0x01: 'idle', 0x02: 'playback', 0x03: 'recording', 0x05: 'pre-rec' };
+function parseAAStatusPush(payload) {
+  if (payload.length < 38) return null;
+  return {
+    cameraMode: payload[0],
+    cameraModeName: AA_MODE_NAMES[payload[0]] || `0x${payload[0].toString(16)}`,
+    cameraStatus: payload[1],
+    cameraStatusName: AA_STATUS_NAMES[payload[1]] || `0x${payload[1].toString(16)}`,
+    recording: payload[1] === 0x03,
+    remainMB: payload[15] | (payload[16] << 8) | (payload[17] << 16) | ((payload[18] << 24) >>> 0),
+    battery: payload[37],
+  };
 }
 
 // ---- Frame builder/parser -----------------------------------------------
@@ -562,6 +600,14 @@ function selectDriver({ device }) {
 
 // ---- DJIControl class ---------------------------------------------------
 export class DJIControl extends EventTarget {
+  static MODES = [
+    { key: 'video', byte: 0x01, label: 'Video' },
+    { key: 'photo', byte: 0x05, label: 'Photo' },
+    { key: 'slow-mo', byte: 0x00, label: 'Slow-Mo' },
+    { key: 'timelapse', byte: 0x02, label: 'Timelapse' },
+    { key: 'hyperlapse', byte: 0x0A, label: 'Hyperlapse' },
+  ];
+
   constructor() {
     super();
     /** @type {Map<string, CameraSession>} */
@@ -780,6 +826,32 @@ export class DJIControl extends EventTarget {
     await s.transport.writeWithoutResponse(s.handle, DJI_SERVICE, DJI_CHAR_NOTIFY2, ackFrame);
     this.log('ok', `${s.label()} 0xAA handshake complete`);
     s._aaConnected = true;
+    // Subscribe to 0xAA status push (2 Hz + state change)
+    try {
+      await s.sendAAAndAwait({
+        seq: nextAASeq(), cmdSet: 0x1D, cmdId: 0x05,
+        payload: buildAAStatusSubPayload(), timeoutMs: 5000,
+      });
+      this.log('ok', `${s.label()} 0xAA status subscription active`);
+    } catch (e) {
+      this.log('warn', `${s.label()} status subscription failed: ${e.message}`);
+    }
+  }
+
+  async setMode(deviceId, mode) {
+    const s = this.pairedCameras.get(deviceId);
+    if (!s || !s.connected) throw new Error('Camera not connected');
+    await this._aaHandshake(s);
+    const seq = nextAASeq();
+    const resp = await s.sendAAAndAwait({
+      seq, cmdSet: 0x1D, cmdId: 0x04,
+      payload: buildAAModeSwitchPayload(mode), timeoutMs: 5000,
+    });
+    if (resp.payload.length >= 1 && resp.payload[0] !== 0x00) {
+      throw new Error(`Mode switch error: ret_code=0x${resp.payload[0].toString(16)}`);
+    }
+    this.log('ok', `${s.label()} mode → ${AA_MODE_NAMES[typeof mode === 'string' ? AA_MODES[mode] : mode] || mode}`);
+    this._emitStatus(s);
   }
 
   async _recordViaAA(s, action) {
@@ -902,6 +974,10 @@ class CameraSession {
     this.streaming = false;
     this.streamUrl = null;
     this.battery = null;
+    this.cameraMode = null;
+    this.cameraModeName = null;
+    this.cameraStatusName = null;
+    this.remainMB = null;
     this.rxBuffer = new Uint8Array(0);
     this.pendingByTxId = new Map(); // txId -> { resolve, reject, timer }
     this.intentionalDisconnect = false;
@@ -1071,8 +1147,23 @@ class CameraSession {
   }
 
   dispatchAAFrame(f) {
-    this.control.log('ok', `⇐ [0xAA] seq=0x${f.seq.toString(16)} cmd=${f.cmdSet}/${f.cmdId} resp=${f.isResponse} payload=${hex(f.payload)}`);
     if (this._aaConnListener) this._aaConnListener(f);
+    // 0xAA status push: CmdSet=0x1D, CmdID=0x02
+    if (f.cmdSet === 0x1D && f.cmdId === 0x02 && !f.isResponse) {
+      const st = parseAAStatusPush(f.payload);
+      if (st) {
+        let changed = false;
+        if (st.battery !== this.battery) { this.battery = st.battery; changed = true; }
+        if (st.recording !== this.recording) { this.recording = st.recording; changed = true; }
+        if (st.cameraMode !== this.cameraMode) { this.cameraMode = st.cameraMode; changed = true; }
+        this.cameraModeName = st.cameraModeName;
+        this.cameraStatusName = st.cameraStatusName;
+        this.remainMB = st.remainMB;
+        if (changed) this.control._emitStatus(this);
+      }
+      return;
+    }
+    this.control.log('ok', `⇐ [0xAA] seq=0x${f.seq.toString(16)} cmd=${f.cmdSet}/${f.cmdId} resp=${f.isResponse} payload=${hex(f.payload)}`);
     const waiter = this.pendingByTxId.get(f.seq);
     if (waiter) {
       clearTimeout(waiter.timer);
